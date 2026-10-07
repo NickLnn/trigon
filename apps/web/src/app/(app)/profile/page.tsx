@@ -2,12 +2,12 @@
 
 import { ChevronRight, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { PageHeader } from '@/components/shell/page-header';
 import { Avatar } from '@/components/ui/avatar';
 import { useSession, useSignOut } from '@/lib/session';
+import { useTheme } from '@/lib/theme';
 
-type Theme = 'system' | 'light' | 'dark';
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -34,27 +34,7 @@ export default function ProfilePage() {
   const { user } = useSession();
   const signOut = useSignOut();
   const router = useRouter();
-  const [theme, setTheme] = useState<Theme>('system');
-
-  useEffect(() => {
-    try {
-      setTheme((localStorage.getItem('trigon.theme') as Theme) ?? 'system');
-    } catch {
-      /* storage unavailable */
-    }
-  }, []);
-
-  const applyTheme = (t: Theme) => {
-    setTheme(t);
-    try {
-      if (t === 'system') localStorage.removeItem('trigon.theme');
-      else localStorage.setItem('trigon.theme', t);
-    } catch {
-      /* storage unavailable */
-    }
-    if (t === 'system') delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = t;
-  };
+  const [theme, applyTheme] = useTheme();
 
   if (!user) return null;
 

@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState, type FormEvent } from 'react';
 import { IconButton, PageHeader } from '@/components/shell/page-header';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
+import { SpaceIcon } from '@/components/ui/doc-icon';
 import { PullToRefresh } from '@/components/ui/pull-to-refresh';
 import { useCreateSpace, useSpaces } from '@/lib/queries';
 
@@ -95,9 +96,7 @@ function SpacesList() {
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           {spaces?.map((s) => (
             <Link key={s.id} href={`/spaces/${s.id}`} className="press flex items-center gap-4 rounded-card bg-surface p-4 shadow-card">
-              <span className="grid size-12 shrink-0 place-items-center rounded-2xl text-xl" style={{ background: s.color ?? 'var(--surface-2)' }}>
-                {s.icon ?? s.name[0]}
-              </span>
+              <SpaceIcon space={s} size="lg" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{s.name}</span>
                 <span className="block truncate text-meta text-ink-3">{s.description || `You can ${s.myPermission}`}</span>

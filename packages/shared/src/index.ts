@@ -227,3 +227,44 @@ export interface AdminGroup {
   members: number;
   lastSyncedAt: string | null;
 }
+
+export interface IconInfo {
+  id: string;
+  name: string;
+  domain: string | null;
+}
+
+export interface IconCatalogEntry {
+  name: string;
+  domain: string;
+  category: string;
+  /** Set once Trigon has fetched and stored the vendor's icon. */
+  iconId: string | null;
+}
+
+/** Icon column values: an emoji, or `img:<icon id>` for a stored image icon. */
+export function iconImageId(icon: string | null | undefined): string | null {
+  return icon?.startsWith('img:') ? icon.slice(4) : null;
+}
+
+export function fileExtension(name: string): string {
+  const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
+  return m ? m[1] : '';
+}
+
+/** Extensions treated as editable plain text (configs, scripts, source code, notes). */
+const TEXT_EXTENSIONS = new Set(
+  (
+    'txt md markdown log csv tsv json jsonc json5 yaml yml toml ini cfg conf env properties xml html htm css scss less ' +
+    'js mjs cjs jsx ts tsx py rb php go rs java kt kts swift c h cpp hpp cc cs fs vb sql sh bash zsh fish ps1 psm1 psd1 bat cmd ' +
+    'dockerfile tf tfvars hcl nix lua pl r dart groovy gradle vue svelte graphql gql proto reg service rules nginx htaccess editorconfig gitignore'
+  ).split(' '),
+);
+
+/** Can this file node be opened in the code editor? */
+export function isTextFile(title: string, mimeType: string | null | undefined): boolean {
+  if (mimeType?.startsWith('text/') || mimeType === 'application/json' || mimeType === 'application/x-yaml') return true;
+  const lower = title.toLowerCase();
+  const ext = lower.includes('.') ? lower.split('.').pop()! : lower;
+  return TEXT_EXTENSIONS.has(ext);
+}

@@ -9,12 +9,12 @@
 :root {
   --bg: #f7f7f8;
   --surface: #ffffff;
-  --surface-2: #eff0f3;
-  --surface-3: #e4e6eb;
+  --surface-2: #ebedf1;
+  --surface-3: #dfe2e8;
   --ink: #191c1f;
-  --ink-2: #505a63;
-  --ink-3: #8b959e;
-  --line: #e6e8ec;
+  --ink-2: #4a545d;
+  --ink-3: #6f7a85;
+  --line: #dfe2e7;
   --accent: #0666eb;
   --accent-ink: #ffffff;
   --accent-soft: #e6effd;
@@ -35,7 +35,7 @@
     --surface-3: #2a2d32;
     --ink: #f5f6f7;
     --ink-2: #b4bcc4;
-    --ink-3: #7b858f;
+    --ink-3: #8a949e;
     --line: #26292e;
     --accent: #3d8bff;
     --accent-soft: #10264a;
@@ -53,7 +53,7 @@
   --surface-3: #2a2d32;
   --ink: #f5f6f7;
   --ink-2: #b4bcc4;
-  --ink-3: #7b858f;
+  --ink-3: #8a949e;
   --line: #26292e;
   --accent: #3d8bff;
   --accent-soft: #10264a;
@@ -119,6 +119,12 @@
   }
   ::selection {
     background: color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+  /* Inputs get a hairline edge so they read clearly on white sheets and cards. */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  textarea,
+  select {
+    box-shadow: inset 0 0 0 1px var(--line);
   }
   :focus-visible {
     outline: 2px solid var(--accent);
@@ -411,4 +417,53 @@
 }
 :root[data-theme='dark'] .brand-on-light {
   display: none !important;
+}
+
+/* Tables */
+.trigon-prose table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  margin: 1em 0;
+}
+.trigon-prose th,
+.trigon-prose td {
+  border: 1px solid var(--line);
+  padding: 0.45em 0.7em;
+  vertical-align: top;
+  position: relative;
+  min-width: 4em;
+}
+.trigon-prose th {
+  background: var(--surface-2);
+  font-weight: 600;
+  text-align: left;
+}
+.trigon-prose td > p,
+.trigon-prose th > p {
+  margin: 0;
+}
+.trigon-prose .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  pointer-events: none;
+}
+.trigon-prose .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.trigon-prose .tableWrapper {
+  overflow-x: auto;
+}
+.resize-cursor {
+  cursor: col-resize;
 }

@@ -8,7 +8,7 @@ import { useState, type ReactNode } from 'react';
 import { PageHeader } from '@/components/shell/page-header';
 import { Avatar } from '@/components/ui/avatar';
 import { CreateSheet } from '@/components/ui/create-sheet';
-import { DocIcon, relativeTime } from '@/components/ui/doc-icon';
+import { DocIcon, relativeTime, SpaceIcon } from '@/components/ui/doc-icon';
 import { PullToRefresh } from '@/components/ui/pull-to-refresh';
 import { useRecent, useSpaces } from '@/lib/queries';
 import { useSession } from '@/lib/session';
@@ -82,9 +82,7 @@ export default function HomePage() {
                   href={`/spaces/${s.id}`}
                   className="press w-40 shrink-0 snap-start rounded-card bg-surface p-4 shadow-card md:w-auto"
                 >
-                  <span className="grid size-10 place-items-center rounded-xl text-lg" style={{ background: s.color ?? 'var(--surface-2)' }}>
-                    {s.icon ?? s.name[0]}
-                  </span>
+                  <SpaceIcon space={s} size="md" />
                   <p className="mt-6 truncate font-semibold">{s.name}</p>
                   <p className="truncate text-meta capitalize text-ink-3">{s.myPermission}</p>
                 </Link>
