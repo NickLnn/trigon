@@ -20,7 +20,7 @@ class CreateSpaceDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(16)
+  @MaxLength(64)
   icon?: string;
 
   @IsOptional()
@@ -42,7 +42,7 @@ class UpdateSpaceDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(16)
+  @MaxLength(64)
   icon?: string;
 
   @IsOptional()

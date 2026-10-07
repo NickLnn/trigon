@@ -6,6 +6,7 @@ import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Image from '@tiptap/extension-image';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
+import { TableKit } from '@tiptap/extension-table';
 import { Placeholder } from '@tiptap/extensions';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -15,6 +16,7 @@ import { api, collabUrl } from '@/lib/api';
 import { lowlight } from '@/lib/code-detect';
 import { AutoCodeDetect } from './extensions/auto-code';
 import { Embed } from './extensions/embed';
+import { SlashCommand } from './extensions/slash-command';
 import { WebClipper, type WebClipperStorage } from './extensions/web-clipper';
 
 const CARET_COLORS = ['#0666EB', '#E5383B', '#00A86B', '#F5A623', '#8E44EC', '#FF6B9A', '#00B5D8'];
@@ -93,8 +95,10 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
         Image.configure({ inline: false, allowBase64: false }),
         TaskList,
         TaskItem.configure({ nested: true }),
+        TableKit.configure({ table: { resizable: true } }),
+        SlashCommand.configure({ uploadImage: (file) => uploadAttachment(documentId, file) }),
         Placeholder.configure({
-          placeholder: ({ node }) => (node.type.name === 'heading' ? 'Heading' : 'Write something, or paste code, a link or a web page…'),
+          placeholder: ({ node }) => (node.type.name === 'heading' ? 'Heading' : "Type '/' for commands, or paste code, a link or a web page…"),
         }),
         Embed,
         // Order matters: embeds claim bare URLs, then code detection, then the HTML clipper.

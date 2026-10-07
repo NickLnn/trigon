@@ -9,6 +9,7 @@ import { DocIcon } from '@/components/ui/doc-icon';
 import { api } from '@/lib/api';
 import { importFiles } from '@/lib/importer';
 import { findPath, useMoveDocument, useTree } from '@/lib/queries';
+import { NodeActions } from './node-actions';
 
 type Zone = 'before' | 'inside' | 'after';
 
@@ -49,9 +50,11 @@ interface NodeProps {
   hover: { id: string; zone: Zone } | null;
   setHover: (h: { id: string; zone: Zone } | null) => void;
   onDrop: (target: DocumentNode, siblings: DocumentNode[], zone: Zone, e: DragEvent) => void;
+  canEdit: boolean;
 }
 
-function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, setHover, onDrop }: NodeProps) {
+function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, setHover, onDrop, canEdit }: NodeProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const hasChildren = !!node.children?.length;
   const open = openIds.has(node.id);
   const active = node.id === activeId;
@@ -68,7 +71,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
   };
 
   const dnd = {
-    draggable: true,
+    draggable: canEdit,
     onDragStart: (e: DragEvent) => {
       dragging = { id: node.id, spaceId: node.spaceId, blocked: collectIds(node) };
       e.dataTransfer.effectAllowed = 'move';
@@ -118,7 +121,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
     </>
   );
 
-  const cls = `group relative flex w-full items-center gap-1.5 rounded-lg py-1 pr-2 text-[0.875rem] ${
+  const cls = `relative flex w-full items-center gap-1.5 rounded-lg py-1 pr-8 text-[0.875rem] ${
     zone === 'inside' ? 'bg-accent-soft ring-2 ring-accent' : active ? 'bg-accent-soft font-medium text-accent' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
   }`;
   const indicator = zone === 'before' || zone === 'after' ? (
@@ -130,6 +133,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
 
   return (
     <li>
+      <div className="group/row relative" onContextMenu={(e) => { e.preventDefault(); setMenuOpen(true); }}>
       {isFolder ? (
         <button {...dnd} className={cls} style={{ paddingLeft: depth * 14 + 4 }} onClick={() => toggle(node.id)} aria-expanded={open}>
           {row}
@@ -141,6 +145,16 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
           {indicator}
         </Link>
       )}
+        <div className="absolute right-1 top-1/2 -translate-y-1/2">
+          <NodeActions
+            node={node}
+            canEdit={canEdit}
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            triggerClassName={menuOpen ? '' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'}
+          />
+        </div>
+      </div>
       {hasChildren && open && (
         <ul>
           {node.children!.map((c) => (
@@ -155,6 +169,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
               hover={hover}
               setHover={setHover}
               onDrop={onDrop}
+              canEdit={canEdit}
             />
           ))}
         </ul>
@@ -176,7 +191,7 @@ function positionFor(target: DocumentNode, siblings: DocumentNode[], zone: 'befo
 }
 
 /** Desktop sidebar tree for one space, with drag & drop; auto-expands to reveal the open document. */
-export function SpaceTree({ spaceId, activeId }: { spaceId: string; activeId?: string }) {
+export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: string; activeId?: string; canEdit?: boolean }) {
   const qc = useQueryClient();
   const { data, isPending } = useTree(spaceId);
   const move = useMoveDocument();
@@ -240,6 +255,7 @@ export function SpaceTree({ spaceId, activeId }: { spaceId: string; activeId?: s
           hover={hover}
           setHover={setHover}
           onDrop={onDrop}
+          canEdit={canEdit}
         />
       ))}
     </ul>

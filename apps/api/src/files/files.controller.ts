@@ -7,15 +7,17 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Res,
   StreamableFile,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { IsOptional, IsUUID, IsUrl } from 'class-validator';
+import { IsOptional, IsString, IsUUID, IsUrl, MaxLength } from 'class-validator';
 import { and, eq, isNull, max } from 'drizzle-orm';
 import type { Response } from 'express';
+import { isTextFile } from '@trigon/shared';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { safeFetch } from '../common/ssrf';
 import { Database, InjectDb } from '../db/db.module';
@@ -33,6 +35,12 @@ class UploadFileDto {
   @IsOptional()
   @IsUUID()
   parentId?: string;
+}
+
+class SaveTextDto {
+  @IsString()
+  @MaxLength(5_000_000)
+  content: string;
 }
 
 class ImportImageDto {
@@ -102,6 +110,23 @@ export class FilesController {
       'X-Content-Type-Options': 'nosniff',
     });
     return new StreamableFile(this.storage.stream(doc.storageKey));
+  }
+
+  /** Save edits to a text/code file node (yaml, json, txt, scripts…). The previous blob is replaced. */
+  @Put(':documentId/content')
+  async saveText(@CurrentUser() user: AuthUser, @Param('documentId', ParseUUIDPipe) documentId: string, @Body() dto: SaveTextDto) {
+    await this.perms.assertDocument(user, documentId, 'edit');
+    const [doc] = await this.db.select().from(documents).where(eq(documents.id, documentId));
+    if (!doc || doc.kind !== 'file' || !doc.storageKey) throw new NotFoundException();
+    if (!isTextFile(doc.title, doc.mimeType)) throw new BadRequestException('Only text and code files can be edited');
+    const data = Buffer.from(dto.content, 'utf8');
+    const storageKey = await this.storage.put(data);
+    await this.db
+      .update(documents)
+      .set({ storageKey, sizeBytes: data.length, textContent: dto.content.slice(0, 1_000_000), updatedById: user.id })
+      .where(eq(documents.id, documentId));
+    await this.storage.remove(doc.storageKey);
+    return { ok: true, sizeBytes: data.length };
   }
 
   /** Upload an image pasted into a page. */

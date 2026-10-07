@@ -35,7 +35,7 @@ class CreateDocumentDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(16)
+  @MaxLength(64)
   icon?: string;
 }
 
@@ -80,7 +80,7 @@ class UpdateDocumentDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(16)
+  @MaxLength(64)
   icon?: string;
 
   /** Move: null puts the document at the space root. */
