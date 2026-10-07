@@ -10,7 +10,11 @@ mobile-first, installable PWA front end inspired by modern fintech apps.
 - **Spaces → folders → pages / files**, with **inherited RBAC** granted to users, synced groups or everyone.
 - **Real-time editor** (Tiptap + Yjs CRDT over WebSockets) with **automatic code detection** on paste,
   a **web clipper** that cleans pasted web pages and re-hosts their images, and **YouTube / Vimeo / Loom / link-card embeds**.
-- **In-app viewers** for **Word (.docx)** and **PDF** (page jump, zoom, text selection, search).
+- **"/" command menu** in pages (headings, lists, to-dos, quotes, code blocks, tables, dividers, images, embeds).
+- **In-app viewers** for **PDF** (page jump, zoom, text selection, search), **Word**, **Excel** and **PowerPoint**.
+- **Editable text & code files** — YAML, JSON, PowerShell, Bash, Python, configs… open in a code editor with highlighting.
+- **Custom icons** for spaces, folders and pages: original vendor logos (Microsoft, VMware, Red Hat… or any website), uploads or emoji.
+- **Admin settings** for Microsoft Entra ID (incl. one-click app registration), LDAP/AD, users and groups.
 - **PWA**: installable on iOS and Android, standalone (no URL bar), offline fallback and cached navigation.
 
 ## Repository layout
@@ -84,6 +88,23 @@ npm run dev                 # api on :4000 (+ ws :4001), web on :3000
 | `npm run db:migrate` | Apply migrations |
 | `npm run icons -w @trigon/web` | Rebuild logo, app icons and favicon from `apps/web/brand-src/trigon-logo-original.png` |
 
+## File support
+
+| Type | In Trigon |
+| ---- | --------- |
+| Pages | Real-time collaborative editing |
+| Text & code (.txt, .md, .yaml, .json, .ps1, .sh, .py, .conf, …) | **Editable** in the built-in code editor |
+| PDF | Viewer with search, zoom, page jump |
+| Word (.docx), Excel (.xlsx), PowerPoint (.pptx) | **Read-only** preview in the browser — download to edit |
+| Visio (.vsdx) | Download only (no browser preview yet) |
+| Images | Inline preview |
+| Anything else | Stored and downloadable |
+
+> **Why Office files are read-only:** in-browser editing of Word/Excel/PowerPoint needs an office
+> server such as OnlyOffice Docs or Collabora, which wants 2–4 GB of RAM on its own. Trigon stays
+> lightweight on the NAS by previewing these files instead. A self-hosted office server can be added
+> later as an optional container if editing becomes a requirement.
+
 ## Architecture notes
 
 **Identity.** `users` is the single identity; `accounts` holds one row per sign-in method
@@ -116,7 +137,7 @@ table (pgvector, HNSW index, 1536 dims) is in place for semantic search; populat
 ## Roadmap (next)
 
 - Share dialog UI (the API — `/permissions` — is ready)
-- Comments, page history / snapshots, trash & restore
+- Trash & restore for deleted items (deletes are soft already)
+- Comments, page history / snapshots
 - Embedding pipeline + semantic search
-- Drag-and-drop reordering in the tree
 - S3-compatible storage driver

@@ -6,6 +6,7 @@ import { ChevronRight, Plus, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
 import { IconButton, PageHeader } from '@/components/shell/page-header';
+import { NodeActions, SpaceActions } from '@/components/shell/node-actions';
 import { dropFiles } from '@/components/shell/space-tree';
 import { CreateSheet } from '@/components/ui/create-sheet';
 import { DocIcon, relativeTime } from '@/components/ui/doc-icon';
@@ -36,11 +37,14 @@ export default function SpacePage({ params }: { params: Promise<{ spaceId: strin
         title={path.at(-1)?.title ?? space?.name ?? ''}
         subtitle={space?.description}
         actions={
-          canEdit && (
-            <IconButton label="Create" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-5" />
-            </IconButton>
-          )
+          <>
+            {space && !folderId && <SpaceActions space={space} triggerClassName="size-10 rounded-full bg-surface shadow-card" />}
+            {canEdit && (
+              <IconButton label="Create" onClick={() => setCreateOpen(true)}>
+                <Plus className="size-5" />
+              </IconButton>
+            )}
+          </>
         }
       />
       <div
@@ -108,18 +112,23 @@ export default function SpacePage({ params }: { params: Promise<{ spaceId: strin
                     {n.kind === 'folder' ? `${n.children?.length ?? 0} items` : relativeTime(n.updatedAt)}
                   </span>
                 </span>
-                <ChevronRight className="size-4 text-ink-3" />
               </>
             );
-            const cls = `press flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 ${i ? 'border-t border-line' : ''}`;
-            return n.kind === 'folder' ? (
-              <button key={n.id} className={cls} onClick={() => setFolderId(n.id)}>
-                {row}
-              </button>
-            ) : (
-              <Link key={n.id} href={`/d/${n.id}`} className={cls}>
-                {row}
-              </Link>
+            const cls = 'press flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left';
+            return (
+              <div key={n.id} className={`flex items-center pr-3 hover:bg-surface-2 ${i ? 'border-t border-line' : ''}`}>
+                {n.kind === 'folder' ? (
+                  <button className={cls} onClick={() => setFolderId(n.id)}>
+                    {row}
+                  </button>
+                ) : (
+                  <Link href={`/d/${n.id}`} className={cls}>
+                    {row}
+                  </Link>
+                )}
+                <NodeActions node={n} canEdit={canEdit} triggerClassName="size-9 rounded-full" />
+                {n.kind === 'folder' && <ChevronRight className="size-4 shrink-0 text-ink-3" />}
+              </div>
             );
           })}
         </div>

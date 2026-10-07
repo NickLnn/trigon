@@ -1,11 +1,13 @@
 'use client';
 
-import { Download, Users } from 'lucide-react';
+import { isTextFile } from '@trigon/shared';
+import { Download, Smile, Users } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { use, useEffect, useRef, useState } from 'react';
 import type { ConnectionStatus } from '@/components/editor/collaborative-editor';
 import { PageHeader } from '@/components/shell/page-header';
-import { fileFlavor } from '@/components/ui/doc-icon';
+import { CustomIcon, fileFlavor } from '@/components/ui/doc-icon';
+import { IconPicker } from '@/components/ui/icon-picker';
 import { useDocument, useUpdateDocument } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 
@@ -13,6 +15,30 @@ import { useSession } from '@/lib/session';
 const CollaborativeEditor = dynamic(() => import('@/components/editor/collaborative-editor').then((m) => m.CollaborativeEditor), { ssr: false });
 const PdfViewer = dynamic(() => import('@/components/viewers/pdf-viewer').then((m) => m.PdfViewer), { ssr: false });
 const DocxViewer = dynamic(() => import('@/components/viewers/docx-viewer').then((m) => m.DocxViewer), { ssr: false });
+const XlsxViewer = dynamic(() => import('@/components/viewers/xlsx-viewer').then((m) => m.XlsxViewer), { ssr: false });
+const PptxViewer = dynamic(() => import('@/components/viewers/pptx-viewer').then((m) => m.PptxViewer), { ssr: false });
+const CodeFileEditor = dynamic(() => import('@/components/viewers/code-file-editor').then((m) => m.CodeFileEditor), { ssr: false });
+
+/** Page icon above the title: click to pick a logo / emoji. */
+function PageIcon({ id, icon, editable }: { id: string; icon: string | null; editable: boolean }) {
+  const update = useUpdateDocument(id);
+  const [open, setOpen] = useState(false);
+  if (!editable && !icon) return null;
+  return (
+    <>
+      {icon ? (
+        <button onClick={() => editable && setOpen(true)} className="press mb-2 inline-block rounded-[1.25rem]" aria-label="Change icon">
+          <CustomIcon icon={icon} size="xl" />
+        </button>
+      ) : (
+        <button onClick={() => setOpen(true)} className="mb-1 inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-ink-3 hover:bg-surface-2 hover:text-ink">
+          <Smile className="size-4" /> Add icon
+        </button>
+      )}
+      <IconPicker open={open} onOpenChange={setOpen} current={icon} onSelect={(v) => update.mutate({ icon: v ?? '' })} />
+    </>
+  );
+}
 
 function StatusPill({ status, peers }: { status: ConnectionStatus; peers: number }) {
   const dot = status === 'connected' ? 'bg-success' : status === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger';
@@ -98,13 +124,27 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
         <div className="min-h-0 flex-1">
           {flavor === 'pdf' && <PdfViewer fileUrl={contentUrl} />}
           {flavor === 'docx' && <DocxViewer fileUrl={contentUrl} />}
+          {flavor === 'xlsx' && <XlsxViewer fileUrl={contentUrl} />}
+          {flavor === 'pptx' && <PptxViewer fileUrl={contentUrl} />}
+          {flavor === 'vsdx' && (
+            <div className="grid h-full place-items-center p-8 text-center text-ink-2">
+              <div className="max-w-sm">
+                <p className="font-semibold text-ink">Visio diagrams can&apos;t be previewed in the browser yet.</p>
+                <p className="mt-1 text-sm">Download it to open in Visio, or export the diagram as PDF/PNG and upload that for in-app viewing.</p>
+                <a href={`/api${contentUrl}`} download={doc.title} className="mt-4 inline-block rounded-pill bg-accent px-5 py-3 font-semibold text-accent-ink">
+                  Download
+                </a>
+              </div>
+            </div>
+          )}
+          {flavor === 'file' && isTextFile(doc.title, doc.mimeType) && <CodeFileEditor documentId={doc.id} fileName={doc.title} editable={canEdit} />}
           {flavor === 'image' && (
             <div className="grid h-full place-items-center overflow-auto bg-surface-2 p-4">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={`/api${contentUrl}`} alt={doc.title} className="max-h-full rounded-xl shadow-card" />
             </div>
           )}
-          {flavor === 'file' && (
+          {flavor === 'file' && !isTextFile(doc.title, doc.mimeType) && (
             <div className="grid h-full place-items-center p-8 text-center text-ink-2">
               <div>
                 <p>No in-app preview for this file type.</p>
@@ -127,6 +167,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
     <article>
       <PageHeader back title="" actions={<StatusPill status={status.s} peers={status.peers} />} />
       <div className="mx-auto max-w-3xl px-5 pb-32 md:px-10">
+        <PageIcon id={doc.id} icon={doc.icon} editable={canEdit} />
         <TitleInput id={doc.id} title={doc.title} editable={canEdit} />
         {!canEdit && <p className="mb-2 text-meta text-ink-3">View only</p>}
         <div className="mt-4">

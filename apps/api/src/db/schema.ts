@@ -251,6 +251,26 @@ export const embeddings = pgTable(
 );
 
 /**
+ * Custom icons for spaces, folders and pages: original vendor favicons fetched from a domain
+ * (microsoft.com, vmware.com…) or images uploaded by users. Referenced as `img:<id>` in `icon` columns.
+ */
+export const icons = pgTable(
+  'icons',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    /** Source domain for fetched favicons; null for uploads. */
+    domain: text('domain'),
+    storageKey: text('storage_key').notNull(),
+    mimeType: text('mime_type').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('icons_domain_uq').on(t.domain)],
+);
+
+/**
  * Admin-editable configuration (auth, Entra, LDAP…), one JSON document per section.
  * Secrets inside are encrypted by SettingsService before they reach this table.
  */

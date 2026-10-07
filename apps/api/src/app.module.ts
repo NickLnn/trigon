@@ -12,6 +12,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { EmbedsModule } from './embeds/embeds.module';
 import { FilesModule } from './files/files.module';
 import { HealthController } from './health.controller';
+import { IconsModule } from './icons/icons.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { SettingsCoreModule, SettingsModule } from './settings/settings.module';
 import { SpacesModule } from './spaces/spaces.module';
@@ -33,6 +34,7 @@ import { UsersModule } from './users/users.module';
     DocumentsModule,
     FilesModule,
     EmbedsModule,
+    IconsModule,
     CollabModule,
     SettingsModule,
   ],
