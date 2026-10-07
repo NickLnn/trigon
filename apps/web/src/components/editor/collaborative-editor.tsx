@@ -9,13 +9,13 @@ import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Placeholder } from '@tiptap/extensions';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { api, collabUrl } from '@/lib/api';
 import { lowlight } from '@/lib/code-detect';
 import { AutoCodeDetect } from './extensions/auto-code';
 import { Embed } from './extensions/embed';
-import { WebClipper } from './extensions/web-clipper';
+import { WebClipper, type WebClipperStorage } from './extensions/web-clipper';
 
 const CARET_COLORS = ['#0666EB', '#E5383B', '#00A86B', '#F5A623', '#8E44EC', '#FF6B9A', '#00B5D8'];
 
@@ -31,6 +31,8 @@ interface Props {
   documentId: string;
   user: { id: string; displayName: string };
   editable: boolean;
+  /** Imported HTML to load into the page the first time it is opened (while the doc is still empty). */
+  initialHtml?: string | null;
   onStatusChange?: (status: ConnectionStatus, peers: number) => void;
 }
 
@@ -46,9 +48,11 @@ async function uploadAttachment(documentId: string, file: File) {
  * Block editor bound to a Yjs document synced through Hocuspocus. Every keystroke is a CRDT
  * update, so concurrent edits merge without conflicts; the server persists the doc state.
  */
-export function CollaborativeEditor({ documentId, user, editable, onStatusChange }: Props) {
+export function CollaborativeEditor({ documentId, user, editable, initialHtml, onStatusChange }: Props) {
   const ydoc = useMemo(() => new Y.Doc(), [documentId]);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
+  const [synced, setSynced] = useState(false);
+  const seeded = useRef(false);
 
   useEffect(() => {
     const p = new HocuspocusProvider({
@@ -59,11 +63,13 @@ export function CollaborativeEditor({ documentId, user, editable, onStatusChange
       token: async () => (await api<{ token: string }>('/auth/collab-token')).token,
       onStatus: ({ status }) => onStatusChange?.(status as ConnectionStatus, p.awareness?.getStates().size ?? 1),
       onAwarenessChange: ({ states }) => onStatusChange?.('connected', states.length),
+      onSynced: () => setSynced(true),
     });
     setProvider(p);
     return () => {
       p.destroy();
       setProvider(null);
+      setSynced(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, ydoc]);
@@ -110,6 +116,15 @@ export function CollaborativeEditor({ documentId, user, editable, onStatusChange
   useEffect(() => {
     editor?.setEditable(editable);
   }, [editor, editable]);
+
+  // Materialise an import once the server state has arrived and turned out to be empty.
+  useEffect(() => {
+    if (!editor || !synced || !initialHtml || !editable || seeded.current) return;
+    seeded.current = true;
+    if (ydoc.getXmlFragment('default').length > 0) return;
+    (editor.storage as unknown as { webClipper: WebClipperStorage }).webClipper.scanNext = true;
+    editor.commands.setContent(initialHtml);
+  }, [editor, synced, initialHtml, editable, ydoc]);
 
   return <EditorContent editor={editor} />;
 }

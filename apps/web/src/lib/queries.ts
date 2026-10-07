@@ -37,6 +37,7 @@ export interface DocumentDetail {
   mimeType: string | null;
   sizeBytes: number | null;
   updatedAt: string;
+  importHtml: string | null;
   myPermission: PermissionLevel;
 }
 
@@ -117,6 +118,45 @@ export function useCreateSpace() {
       api<{ id: string }>('/spaces', { method: 'POST', json: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['spaces'] }),
   });
+}
+
+/** Move/reorder a node in the tree (drag & drop). */
+export function useMoveDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, parentId, position }: { id: string; spaceId: string; parentId: string | null; position: number }) =>
+      api(`/documents/${id}`, { method: 'PATCH', json: { parentId, position } }),
+    // Optimistic: reshape the cached tree immediately so the drop feels instant.
+    onMutate: async ({ id, spaceId, parentId, position }) => {
+      await qc.cancelQueries({ queryKey: ['tree', spaceId] });
+      const prev = qc.getQueryData<DocumentNode[]>(['tree', spaceId]);
+      if (prev) {
+        const flat: DocumentNode[] = [];
+        const walk = (ns: DocumentNode[]) => ns.forEach((n) => (flat.push({ ...n, children: undefined }), n.children && walk(n.children)));
+        walk(prev);
+        const moved = flat.map((n) => (n.id === id ? { ...n, parentId, position } : n));
+        qc.setQueryData(['tree', spaceId], buildTree(moved));
+      }
+      return { prev };
+    },
+    onError: (_e, v, ctx) => ctx?.prev && qc.setQueryData(['tree', v.spaceId], ctx.prev),
+    onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ['tree', v.spaceId] }),
+  });
+}
+
+export function buildTree(rows: DocumentNode[]): DocumentNode[] {
+  const byId = new Map(rows.map((r) => [r.id, { ...r, children: [] as DocumentNode[] }]));
+  const roots: DocumentNode[] = [];
+  for (const node of byId.values()) {
+    const parent = node.parentId ? byId.get(node.parentId) : undefined;
+    (parent ? parent.children : roots).push(node);
+  }
+  const sort = (list: DocumentNode[]) => {
+    list.sort((a, b) => a.position - b.position || a.title.localeCompare(b.title));
+    list.forEach((n) => sort(n.children ?? []));
+  };
+  sort(roots);
+  return roots;
 }
 
 /** Find a node and the chain of ancestors leading to it. */

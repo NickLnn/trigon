@@ -81,6 +81,7 @@
   --color-overlay: var(--overlay);
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-brand: var(--font-brand-face), var(--font-inter), sans-serif;
   --font-mono: var(--font-mono-face), ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 
   /* Type scale: big confident titles, compact meta text */
@@ -379,4 +380,16 @@
 }
 .pdf-page .textLayer ::selection {
   background: rgb(6 102 235 / 0.3);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.97);
+  }
 }

@@ -134,6 +134,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
             documentId={doc.id}
             user={{ id: user.id, displayName: user.displayName }}
             editable={canEdit}
+            initialHtml={doc.importHtml}
             onStatusChange={(s, peers) => setStatus({ s, peers })}
           />
         </div>

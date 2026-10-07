@@ -39,6 +39,39 @@ class CreateDocumentDto {
   icon?: string;
 }
 
+class ImportDocumentDto {
+  @IsUUID()
+  spaceId: string;
+
+  @IsOptional()
+  @IsUUID()
+  parentId?: string;
+
+  @IsString()
+  @MaxLength(255)
+  title: string;
+
+  /** Sanitised HTML produced client-side from the uploaded .md / .html file. */
+  @IsString()
+  @MaxLength(5_000_000)
+  html: string;
+}
+
+/** Rough HTML → plain text, only used to make imported pages searchable before first open. */
+function htmlToText(html: string) {
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<\/(p|h[1-6]|li|pre|blockquote|tr|div)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n\n')
+    .trim();
+}
+
 class UpdateDocumentDto {
   @IsOptional()
   @IsString()
@@ -98,6 +131,39 @@ export class DocumentsController {
         updatedById: user.id,
       })
       .returning({ id: documents.id, title: documents.title, kind: documents.kind });
+    return doc;
+  }
+
+  /**
+   * Create a page from imported Markdown/HTML. The HTML is parked on the row and turned into the
+   * collaborative document by the first editor that opens it; search works immediately.
+   */
+  @Post('import')
+  async import(@CurrentUser() user: AuthUser, @Body() dto: ImportDocumentDto) {
+    if (dto.parentId) {
+      const { spaceId } = await this.perms.assertDocument(user, dto.parentId, 'edit');
+      if (spaceId !== dto.spaceId) throw new BadRequestException('Parent belongs to another space');
+    } else {
+      await this.perms.assertSpace(user, dto.spaceId, 'edit');
+    }
+    const [{ last }] = await this.db
+      .select({ last: max(documents.position) })
+      .from(documents)
+      .where(and(eq(documents.spaceId, dto.spaceId), dto.parentId ? eq(documents.parentId, dto.parentId) : isNull(documents.parentId)));
+    const [doc] = await this.db
+      .insert(documents)
+      .values({
+        spaceId: dto.spaceId,
+        parentId: dto.parentId ?? null,
+        kind: 'page',
+        title: dto.title.trim() || 'Imported page',
+        importHtml: dto.html,
+        textContent: htmlToText(dto.html).slice(0, 1_000_000),
+        position: (last ?? 0) + 1,
+        createdById: user.id,
+        updatedById: user.id,
+      })
+      .returning({ id: documents.id, title: documents.title });
     return doc;
   }
 
@@ -181,6 +247,7 @@ export class DocumentsController {
         title: documents.title,
         icon: documents.icon,
         content: documents.content,
+        importHtml: documents.importHtml,
         mimeType: documents.mimeType,
         sizeBytes: documents.sizeBytes,
         createdAt: documents.createdAt,

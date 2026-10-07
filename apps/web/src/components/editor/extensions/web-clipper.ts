@@ -30,8 +30,17 @@ function replaceImageSrc(view: EditorView, from: string, to: string | null) {
  * external image locally so clipped content survives the source page changing or disappearing.
  * Also handles pasting/dropping image files.
  */
-export const WebClipper = Extension.create<WebClipperOptions>({
+export interface WebClipperStorage {
+  /** Set before programmatic inserts (imports) so their external images get re-hosted too. */
+  scanNext: boolean;
+}
+
+export const WebClipper = Extension.create<WebClipperOptions, WebClipperStorage>({
   name: 'webClipper',
+
+  addStorage() {
+    return { scanNext: false };
+  },
 
   addOptions() {
     return {
@@ -44,6 +53,7 @@ export const WebClipper = Extension.create<WebClipperOptions>({
 
   addProseMirrorPlugins() {
     const options = this.options;
+    const storage = this.storage;
     let lastSourceUrl: string | null = null;
     let scanAfterPaste = false;
     const inFlight = new Set<string>();
@@ -91,8 +101,9 @@ export const WebClipper = Extension.create<WebClipperOptions>({
         },
         view: () => ({
           update(view) {
-            if (!scanAfterPaste) return;
+            if (!scanAfterPaste && !storage.scanNext) return;
             scanAfterPaste = false;
+            storage.scanNext = false;
             view.state.doc.descendants((node) => {
               if (node.type.name !== 'image') return;
               const src: string = node.attrs.src ?? '';

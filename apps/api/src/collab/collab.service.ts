@@ -58,6 +58,8 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
               ydoc: Buffer.from(state),
               content: json as unknown as Record<string, unknown>,
               textContent: proseMirrorText(json).slice(0, 1_000_000),
+              // Once an editor has materialised an import into the Yjs doc, the raw HTML is no longer needed.
+              importHtml: null,
               updatedById: (lastContext as { userId?: string } | undefined)?.userId,
             })
             .where(eq(documents.id, documentName));
