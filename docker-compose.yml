@@ -7,6 +7,7 @@ name: trigon
 
 services:
   postgres:
+    container_name: trigon-postgres
     image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
@@ -25,6 +26,7 @@ services:
       retries: 20
 
   redis:
+    container_name: trigon-redis
     image: redis:7-alpine
     restart: unless-stopped
     command: ['redis-server', '--appendonly', 'yes']
@@ -39,6 +41,7 @@ services:
       retries: 20
 
   api:
+    container_name: trigon-api
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -68,6 +71,7 @@ services:
         condition: service_healthy
 
   web:
+    container_name: trigon-web
     build:
       context: .
       dockerfile: apps/web/Dockerfile
