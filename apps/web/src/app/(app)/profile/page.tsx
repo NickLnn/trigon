@@ -1,19 +1,13 @@
 'use client';
 
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { ChevronRight, LogOut, Monitor, Moon, RefreshCw, Sun } from 'lucide-react';
+import { ChevronRight, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { PageHeader } from '@/components/shell/page-header';
 import { Avatar } from '@/components/ui/avatar';
-import { api } from '@/lib/api';
 import { useSession, useSignOut } from '@/lib/session';
 
 type Theme = 'system' | 'light' | 'dark';
-
-interface DirectoryStatus {
-  entra: { enabled: boolean; running: boolean; lastGroupSync: string | null; accounts: number };
-  ldap: { enabled: boolean; running: boolean; lastGroupSync: string | null; accounts: number };
-}
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -36,37 +30,10 @@ function Row({ icon, label, value, onClick }: { icon?: ReactNode; label: string;
   );
 }
 
-function DirectorySync() {
-  const status = useQuery({ queryKey: ['directory-status'], queryFn: () => api<DirectoryStatus>('/directory/status') });
-  const sync = useMutation({
-    mutationFn: (source: 'entra' | 'ldap') => api(`/directory/sync/${source}`, { method: 'POST' }),
-    onSettled: () => status.refetch(),
-  });
-  if (!status.data) return null;
-  const sources = (['entra', 'ldap'] as const).filter((s) => status.data[s].enabled);
-  if (!sources.length) return null;
-  return (
-    <Group title="Directory sync (admin)">
-      {sources.map((s) => {
-        const info = status.data[s];
-        return (
-          <Row
-            key={s}
-            icon={<RefreshCw className={`size-4 ${info.running || (sync.isPending && sync.variables === s) ? 'animate-spin' : ''}`} />}
-            label={s === 'entra' ? 'Microsoft Entra ID' : 'LDAP / Active Directory'}
-            value={`${info.accounts} users${info.lastGroupSync ? ` · ${new Date(info.lastGroupSync).toLocaleString()}` : ''}`}
-            onClick={() => sync.mutate(s)}
-          />
-        );
-      })}
-      {sync.error && <p className="px-4 py-3 text-sm text-danger">{sync.error.message}</p>}
-    </Group>
-  );
-}
-
 export default function ProfilePage() {
   const { user } = useSession();
   const signOut = useSignOut();
+  const router = useRouter();
   const [theme, setTheme] = useState<Theme>('system');
 
   useEffect(() => {
@@ -130,7 +97,11 @@ export default function ProfilePage() {
           </div>
         </Group>
 
-        {user.role === 'admin' && <DirectorySync />}
+        {user.role === 'admin' && (
+          <Group title="Administration">
+            <Row icon={<Settings className="size-4" />} label="Settings" value="Entra, LDAP, users, groups" onClick={() => router.push('/settings')} />
+          </Group>
+        )}
 
         <Group title="Account">
           <Row icon={<LogOut className="size-4" />} label="Sign out" onClick={signOut} />

@@ -170,6 +170,8 @@ export const documents = pgTable(
     mimeType: text('mime_type'),
     sizeBytes: integer('size_bytes'),
     storageKey: text('storage_key'),
+    /** Sanitised HTML from a Markdown/HTML import; seeds the Yjs doc on first open, then cleared. */
+    importHtml: text('import_html'),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
     updatedById: uuid('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -247,6 +249,20 @@ export const embeddings = pgTable(
     index('embeddings_hnsw_idx').using('hnsw', t.embedding.op('vector_cosine_ops')),
   ],
 );
+
+/**
+ * Admin-editable configuration (auth, Entra, LDAP…), one JSON document per section.
+ * Secrets inside are encrypted by SettingsService before they reach this table.
+ */
+export const settings = pgTable('settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').$type<Record<string, unknown>>().notNull(),
+  updatedById: uuid('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
 
 export const usersRelations = relations(users, ({ many }) => ({
   accounts: many(accounts),

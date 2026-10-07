@@ -1,6 +1,7 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import type { LdapSettings } from '@trigon/shared';
 import { Client, type Entry } from 'ldapts';
+import { SettingsService } from '../settings/settings.service';
 
 export interface LdapUser {
   dn: string;
@@ -54,26 +55,32 @@ const all = (v: Entry[string] | undefined): string[] =>
 export class LdapService {
   private readonly logger = new Logger(LdapService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly settings: SettingsService) {}
 
-  get enabled() {
-    return this.config.get('LDAP_ENABLED') === 'true';
+  async enabled() {
+    const s = await this.settings.get('ldap');
+    return s.enabled && !!s.url;
   }
 
-  private client() {
-    if (!this.enabled) throw new ServiceUnavailableException('LDAP is not enabled');
+  private async resolve(override?: LdapSettings): Promise<LdapSettings> {
+    if (override) return override;
+    if (!(await this.enabled())) throw new ServiceUnavailableException('LDAP is not enabled');
+    return this.settings.get('ldap');
+  }
+
+  private client(s: LdapSettings) {
     return new Client({
-      url: this.config.getOrThrow('LDAP_URL'),
+      url: s.url,
       timeout: 10_000,
       connectTimeout: 10_000,
-      tlsOptions: { rejectUnauthorized: this.config.get('LDAP_TLS_REJECT_UNAUTHORIZED') !== 'false' },
+      tlsOptions: { rejectUnauthorized: s.tlsRejectUnauthorized },
     });
   }
 
-  private async withServiceBind<T>(fn: (c: Client) => Promise<T>): Promise<T> {
-    const c = this.client();
+  private async withServiceBind<T>(s: LdapSettings, fn: (c: Client) => Promise<T>): Promise<T> {
+    const c = this.client(s);
     try {
-      await c.bind(this.config.getOrThrow('LDAP_BIND_DN'), this.config.getOrThrow('LDAP_BIND_PASSWORD'));
+      await c.bind(s.bindDn, s.bindPassword ?? '');
       return await fn(c);
     } finally {
       await c.unbind().catch(() => undefined);
@@ -105,9 +112,10 @@ export class LdapService {
    */
   async authenticate(username: string, password: string): Promise<LdapUser | null> {
     if (!username || !password) return null; // an empty password would be an unauthenticated bind
-    const filter = this.config.getOrThrow<string>('LDAP_USER_FILTER').replaceAll('{{username}}', escapeLdapFilter(username));
-    const entry = await this.withServiceBind(async (c) => {
-      const { searchEntries } = await c.search(this.config.getOrThrow('LDAP_SEARCH_BASE'), {
+    const s = await this.resolve();
+    const filter = s.userFilter.replaceAll('{{username}}', escapeLdapFilter(username));
+    const entry = await this.withServiceBind(s, async (c) => {
+      const { searchEntries } = await c.search(s.searchBase, {
         scope: 'sub',
         filter,
         attributes: USER_ATTRS,
@@ -118,7 +126,7 @@ export class LdapService {
     });
     if (!entry) return null;
 
-    const userClient = this.client();
+    const userClient = this.client(s);
     try {
       await userClient.bind(entry.dn, password);
     } catch (err) {
@@ -131,12 +139,12 @@ export class LdapService {
     return user.disabled ? null : user;
   }
 
-  async listUsers(): Promise<LdapUser[]> {
-    const filter = this.config.get<string>('LDAP_SYNC_USER_FILTER') ?? '(&(objectClass=user)(objectCategory=person))';
-    return this.withServiceBind(async (c) => {
-      const { searchEntries } = await c.search(this.config.getOrThrow('LDAP_SEARCH_BASE'), {
+  async listUsers(override?: LdapSettings): Promise<LdapUser[]> {
+    const s = await this.resolve(override);
+    return this.withServiceBind(s, async (c) => {
+      const { searchEntries } = await c.search(s.searchBase, {
         scope: 'sub',
-        filter,
+        filter: s.syncUserFilter,
         attributes: USER_ATTRS,
         explicitBufferAttributes: ['objectGUID'],
         paged: { pageSize: 500 },
@@ -145,11 +153,12 @@ export class LdapService {
     });
   }
 
-  async listGroups(): Promise<LdapGroup[]> {
-    return this.withServiceBind(async (c) => {
-      const { searchEntries } = await c.search(this.config.getOrThrow('LDAP_SEARCH_BASE'), {
+  async listGroups(override?: LdapSettings): Promise<LdapGroup[]> {
+    const s = await this.resolve(override);
+    return this.withServiceBind(s, async (c) => {
+      const { searchEntries } = await c.search(s.searchBase, {
         scope: 'sub',
-        filter: this.config.get<string>('LDAP_GROUP_FILTER') ?? '(objectClass=group)',
+        filter: s.groupFilter,
         attributes: ['dn', 'cn', 'description', 'member'],
         paged: { pageSize: 500 },
       });
@@ -160,5 +169,11 @@ export class LdapService {
         members: all(e.member),
       }));
     });
+  }
+
+  /** Settings-page check: bind with the service account and count what the filters find. */
+  async test(s: LdapSettings): Promise<{ users: number; groups: number }> {
+    const [users, groups] = [await this.listUsers(s), await this.listGroups(s)];
+    return { users: users.length, groups: groups.length };
   }
 }

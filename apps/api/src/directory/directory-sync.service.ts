@@ -1,11 +1,11 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import type { GroupSource } from '@trigon/shared';
 import { CronJob } from 'cron';
 import { and, count, eq, inArray, max, notInArray } from 'drizzle-orm';
 import { Database, InjectDb } from '../db/db.module';
 import { accounts, groupMembers, groups } from '../db/schema';
+import { SettingsService } from '../settings/settings.service';
 import { IdentityService } from '../users/identity.service';
 import { EntraClientService } from './entra-client.service';
 import { LdapService } from './ldap.service';
@@ -49,16 +49,28 @@ export class DirectorySyncService implements OnModuleInit {
 
   constructor(
     @InjectDb() private readonly db: Database,
-    private readonly config: ConfigService,
+    private readonly settings: SettingsService,
     private readonly identity: IdentityService,
     private readonly entra: EntraClientService,
     private readonly ldap: LdapService,
     private readonly scheduler: SchedulerRegistry,
   ) {}
 
-  onModuleInit() {
-    this.schedule('entra', this.entra.enabled, this.config.get('ENTRA_SYNC_CRON'), () => this.syncEntra());
-    this.schedule('ldap', this.ldap.enabled, this.config.get('LDAP_SYNC_CRON'), () => this.syncLdap());
+  async onModuleInit() {
+    await this.reschedule('entra');
+    await this.reschedule('ldap');
+    this.settings.changes.on('changed', (key) => {
+      if (key === 'entra' || key === 'ldap') this.reschedule(key).catch((e) => this.logger.error(e.message));
+    });
+  }
+
+  /** (Re)create the cron job for a source from its current settings. */
+  private async reschedule(source: 'entra' | 'ldap') {
+    const name = `directory-sync-${source}`;
+    if (this.scheduler.doesExist('cron', name)) this.scheduler.deleteCronJob(name);
+    const enabled = source === 'entra' ? await this.entra.enabled() : await this.ldap.enabled();
+    const { syncCron } = await this.settings.get(source);
+    this.schedule(source, enabled, syncCron, () => (source === 'entra' ? this.syncEntra() : this.syncLdap()));
   }
 
   private schedule(name: string, enabled: boolean, cron: string | undefined, fn: () => Promise<unknown>) {
@@ -224,12 +236,13 @@ export class DirectorySyncService implements OnModuleInit {
       .select({ provider: accounts.provider, total: count() })
       .from(accounts)
       .groupBy(accounts.provider);
+    const [entraOn, ldapOn] = [await this.entra.enabled(), await this.ldap.enabled()];
     const describe = (s: GroupSource, enabled: boolean) => ({
       enabled,
       running: this.running.has(s),
       lastGroupSync: lastSync.find((r) => r.source === s)?.at ?? null,
       accounts: linked.find((r) => r.provider === s)?.total ?? 0,
     });
-    return { entra: describe('entra', this.entra.enabled), ldap: describe('ldap', this.ldap.enabled) };
+    return { entra: describe('entra', entraOn), ldap: describe('ldap', ldapOn) };
   }
 }

@@ -153,3 +153,77 @@ export function matchEmbedProvider(raw: string): EmbedProviderMatch | null {
 
   return null;
 }
+
+// ─── Admin settings (secrets are never sent to the browser; `hasX` flags say whether one is stored) ───
+
+export interface GeneralSettings {
+  allowLocalSignup: boolean;
+}
+
+export interface EntraSettings {
+  enabled: boolean;
+  tenantId: string;
+  clientId: string;
+  /** Write-only: send a new value to replace, omit/empty to keep the stored one. */
+  clientSecret?: string;
+  hasClientSecret?: boolean;
+  /** Empty = <APP_URL>/api/auth/entra/callback */
+  redirectUri: string;
+  syncCron: string;
+  /** Set when Trigon created the app registration itself. */
+  provisionedAppId?: string | null;
+}
+
+export interface LdapSettings {
+  enabled: boolean;
+  url: string;
+  bindDn: string;
+  bindPassword?: string;
+  hasBindPassword?: boolean;
+  searchBase: string;
+  userFilter: string;
+  syncUserFilter: string;
+  groupFilter: string;
+  tlsRejectUnauthorized: boolean;
+  syncCron: string;
+}
+
+export interface AllSettings {
+  general: GeneralSettings;
+  entra: EntraSettings;
+  ldap: LdapSettings;
+  /** Read-only facts the settings UI needs. */
+  info: { appUrl: string; entraRedirectUri: string; httpsWarning: boolean };
+}
+
+export type ProvisionState = 'idle' | 'waiting_for_sign_in' | 'working' | 'done' | 'error';
+
+export interface EntraProvisionStatus {
+  state: ProvisionState;
+  userCode?: string;
+  verificationUri?: string;
+  expiresAt?: string;
+  steps: { label: string; done: boolean }[];
+  message?: string;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role: SystemRole;
+  active: boolean;
+  providers: AuthProvider[];
+  groups: number;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface AdminGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  source: GroupSource;
+  members: number;
+  lastSyncedAt: string | null;
+}

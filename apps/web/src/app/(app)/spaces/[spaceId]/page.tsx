@@ -2,10 +2,11 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import type { DocumentNode } from '@trigon/shared';
-import { ChevronRight, Plus } from 'lucide-react';
+import { ChevronRight, Plus, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
 import { IconButton, PageHeader } from '@/components/shell/page-header';
+import { dropFiles } from '@/components/shell/space-tree';
 import { CreateSheet } from '@/components/ui/create-sheet';
 import { DocIcon, relativeTime } from '@/components/ui/doc-icon';
 import { PullToRefresh } from '@/components/ui/pull-to-refresh';
@@ -22,6 +23,7 @@ export default function SpacePage({ params }: { params: Promise<{ spaceId: strin
   const { data: tree, isPending } = useTree(spaceId);
   const [folderId, setFolderId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [dropping, setDropping] = useState<'over' | 'busy' | null>(null);
   const canEdit = space?.myPermission === 'edit' || space?.myPermission === 'manage';
 
   const path = useMemo(() => (tree && folderId ? (findPath(tree, folderId) ?? []) : []), [tree, folderId]);
@@ -41,7 +43,33 @@ export default function SpacePage({ params }: { params: Promise<{ spaceId: strin
           )
         }
       />
-      <div className="mx-auto max-w-3xl px-4 pb-10 md:px-10">
+      <div
+        className="relative mx-auto max-w-3xl px-4 pb-10 md:px-10"
+        onDragOver={(e) => {
+          if (!canEdit || !Array.from(e.dataTransfer.types).includes('Files')) return;
+          e.preventDefault();
+          setDropping('over');
+        }}
+        onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setDropping(null)}
+        onDrop={async (e) => {
+          if (!canEdit || !e.dataTransfer.files.length) return;
+          e.preventDefault();
+          setDropping('busy');
+          try {
+            await dropFiles(Array.from(e.dataTransfer.files), spaceId, folderId);
+            await qc.invalidateQueries({ queryKey: ['tree', spaceId] });
+          } finally {
+            setDropping(null);
+          }
+        }}
+      >
+        {dropping && (
+          <div className="pointer-events-none absolute inset-0 z-10 mx-4 grid place-items-center rounded-card border-2 border-dashed border-accent bg-accent-soft/80 md:mx-10">
+            <span className="flex items-center gap-2 font-semibold text-accent">
+              <Upload className="size-5" /> {dropping === 'busy' ? 'Uploading…' : 'Drop to upload — .md / .html become pages'}
+            </span>
+          </div>
+        )}
         {folderId && (
           <nav className="no-scrollbar mb-3 flex items-center gap-1 overflow-x-auto whitespace-nowrap text-sm" aria-label="Breadcrumb">
             <button onClick={() => setFolderId(null)} className="rounded-pill bg-surface px-3 py-1.5 font-medium shadow-card">

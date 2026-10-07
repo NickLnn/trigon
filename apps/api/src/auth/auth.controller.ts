@@ -22,6 +22,7 @@ import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 import type { Request, Response } from 'express';
 import { CurrentUser, Public, type AuthUser } from '../common/decorators';
 import { LdapService } from '../directory/ldap.service';
+import { SettingsService } from '../settings/settings.service';
 import { IdentityService } from '../users/identity.service';
 import { EntraAuthService, type EntraLoginState } from './entra-auth.service';
 import { TokensService } from './tokens.service';
@@ -55,19 +56,20 @@ export class AuthController {
     private readonly ldap: LdapService,
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
+    private readonly settings: SettingsService,
   ) {}
 
-  private get signupAllowed() {
-    return this.config.get('ALLOW_LOCAL_SIGNUP') !== 'false';
+  private async signupAllowed() {
+    return (await this.settings.get('general')).allowLocalSignup;
   }
 
   @Public()
   @Get('config')
-  authConfig(): AuthConfig {
+  async authConfig(): Promise<AuthConfig> {
     return {
-      local: { enabled: true, signup: this.signupAllowed },
-      entra: { enabled: this.entra.enabled },
-      ldap: { enabled: this.ldap.enabled },
+      local: { enabled: true, signup: await this.signupAllowed() },
+      entra: { enabled: await this.entra.enabled() },
+      ldap: { enabled: await this.ldap.enabled() },
     };
   }
 
@@ -75,7 +77,7 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('register')
   async register(@Body() dto: RegisterDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    if (!this.signupAllowed) throw new ForbiddenException('Self-registration is disabled');
+    if (!(await this.signupAllowed())) throw new ForbiddenException('Self-registration is disabled');
     if (await this.identity.findUserByEmail(dto.email)) throw new ConflictException('An account with this email already exists');
     const user = await this.identity.createLocal(dto.email.trim(), dto.displayName.trim(), await hash(dto.password));
     await this.tokens.issueSession(res, user, req.headers['user-agent']);

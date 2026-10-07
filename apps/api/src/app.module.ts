@@ -13,6 +13,7 @@ import { EmbedsModule } from './embeds/embeds.module';
 import { FilesModule } from './files/files.module';
 import { HealthController } from './health.controller';
 import { PermissionsModule } from './permissions/permissions.module';
+import { SettingsCoreModule, SettingsModule } from './settings/settings.module';
 import { SpacesModule } from './spaces/spaces.module';
 import { UsersModule } from './users/users.module';
 
@@ -23,6 +24,7 @@ import { UsersModule } from './users/users.module';
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     DbModule,
+    SettingsCoreModule,
     UsersModule,
     PermissionsModule,
     DirectoryModule,
@@ -32,6 +34,7 @@ import { UsersModule } from './users/users.module';
     FilesModule,
     EmbedsModule,
     CollabModule,
+    SettingsModule,
   ],
   controllers: [HealthController],
   providers: [

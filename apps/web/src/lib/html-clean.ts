@@ -9,7 +9,7 @@ const ALLOWED_TAGS = [
   'div', 'span', 'section', 'article', 'main',
   'input', 'label',
 ];
-const ALLOWED_ATTR = ['href', 'src', 'alt', 'title', 'class', 'data-language', 'type', 'checked', 'colspan', 'rowspan', 'start'];
+const ALLOWED_ATTR = ['href', 'src', 'alt', 'title', 'class', 'data-language', 'data-type', 'data-checked', 'type', 'checked', 'colspan', 'rowspan', 'start'];
 
 /** Pull a language hint from common highlighter class conventions (Prism, hljs, GitHub, MDN…). */
 function languageFromClasses(el: Element | null): string | null {
