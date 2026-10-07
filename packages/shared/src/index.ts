@@ -1,0 +1,155 @@
+/**
+ * Types and constants shared by the API and the web app.
+ * Keep this package dependency-free so both sides can import it cheaply.
+ */
+
+export const AUTH_PROVIDERS = ['local', 'entra', 'ldap'] as const;
+export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
+
+export const GROUP_SOURCES = ['local', 'entra', 'ldap'] as const;
+export type GroupSource = (typeof GROUP_SOURCES)[number];
+
+/** Workspace-wide role. Admins bypass resource permissions. */
+export const SYSTEM_ROLES = ['admin', 'member', 'guest'] as const;
+export type SystemRole = (typeof SYSTEM_ROLES)[number];
+
+/**
+ * Resource permission levels, ordered from weakest to strongest.
+ * A grant on a space or folder is inherited by everything beneath it.
+ */
+export const PERMISSION_LEVELS = ['view', 'comment', 'edit', 'manage'] as const;
+export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
+
+export function permissionRank(level: PermissionLevel | null | undefined): number {
+  return level ? PERMISSION_LEVELS.indexOf(level) + 1 : 0;
+}
+
+export function atLeast(granted: PermissionLevel | null | undefined, required: PermissionLevel): boolean {
+  return permissionRank(granted) >= permissionRank(required);
+}
+
+export const DOCUMENT_KINDS = ['folder', 'page', 'file'] as const;
+export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
+
+export interface SessionUser {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl: string | null;
+  role: SystemRole;
+  providers: AuthProvider[];
+}
+
+export interface AuthConfig {
+  local: { enabled: boolean; signup: boolean };
+  entra: { enabled: boolean };
+  ldap: { enabled: boolean };
+}
+
+export interface SpaceSummary {
+  id: string;
+  name: string;
+  slug: string;
+  icon: string | null;
+  color: string | null;
+  description: string | null;
+  myPermission: PermissionLevel;
+}
+
+export interface DocumentNode {
+  id: string;
+  spaceId: string;
+  parentId: string | null;
+  kind: DocumentKind;
+  title: string;
+  icon: string | null;
+  position: number;
+  mimeType: string | null;
+  updatedAt: string;
+  children?: DocumentNode[];
+}
+
+export interface EmbedInfo {
+  url: string;
+  provider: string | null;
+  type: 'video' | 'rich' | 'link' | 'photo';
+  title: string | null;
+  description: string | null;
+  thumbnailUrl: string | null;
+  /** Sanitized iframe src for known video providers. */
+  embedUrl: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+/** Name of the httpOnly cookie carrying the short-lived access token. */
+export const ACCESS_COOKIE = 'trigon_at';
+/** Name of the httpOnly cookie carrying the rotating refresh token. */
+export const REFRESH_COOKIE = 'trigon_rt';
+
+export interface EmbedProviderMatch {
+  provider: 'youtube' | 'vimeo' | 'loom';
+  id: string;
+  /** Privacy-friendly iframe src. */
+  embedUrl: string;
+  oembedEndpoint: string;
+}
+
+/**
+ * Recognise video URLs we can embed directly as iframes, without a network round-trip.
+ * Used by the editor (instant preview) and the API (oEmbed metadata).
+ */
+export function matchEmbedProvider(raw: string): EmbedProviderMatch | null {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^www\.|^m\./, '');
+  const enc = encodeURIComponent(raw);
+
+  if (host === 'youtube.com' || host === 'youtu.be' || host === 'youtube-nocookie.com') {
+    let id: string | null = null;
+    if (host === 'youtu.be') id = url.pathname.slice(1).split('/')[0];
+    else if (url.pathname === '/watch') id = url.searchParams.get('v');
+    else {
+      const m = url.pathname.match(/^\/(?:embed|shorts|live|v)\/([\w-]{6,})/);
+      id = m?.[1] ?? null;
+    }
+    if (!id || !/^[\w-]{6,20}$/.test(id)) return null;
+    const start = url.searchParams.get('t') ?? url.searchParams.get('start');
+    const startSec = start ? parseInt(start, 10) : 0;
+    return {
+      provider: 'youtube',
+      id,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${id}${startSec > 0 ? `?start=${startSec}` : ''}`,
+      oembedEndpoint: `https://www.youtube.com/oembed?format=json&url=${enc}`,
+    };
+  }
+
+  if (host === 'vimeo.com' || host === 'player.vimeo.com') {
+    const m = url.pathname.match(/(?:^|\/)(?:video\/)?(\d{5,})(?:\/([\da-f]{6,}))?/);
+    if (!m) return null;
+    const hash = m[2] ?? url.searchParams.get('h');
+    return {
+      provider: 'vimeo',
+      id: m[1],
+      embedUrl: `https://player.vimeo.com/video/${m[1]}${hash ? `?h=${hash}` : ''}`,
+      oembedEndpoint: `https://vimeo.com/api/oembed.json?url=${enc}`,
+    };
+  }
+
+  if (host === 'loom.com') {
+    const m = url.pathname.match(/^\/(?:share|embed)\/([\da-f]{16,})/);
+    if (!m) return null;
+    return {
+      provider: 'loom',
+      id: m[1],
+      embedUrl: `https://www.loom.com/embed/${m[1]}`,
+      oembedEndpoint: `https://www.loom.com/v1/oembed?url=${enc}`,
+    };
+  }
+
+  return null;
+}
