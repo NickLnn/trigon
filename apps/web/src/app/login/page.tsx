@@ -5,6 +5,7 @@ import type { AuthConfig } from '@trigon/shared';
 import { Building2, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState, type FormEvent } from 'react';
+import { Logo } from '@/components/ui/logo';
 import { api } from '@/lib/api';
 
 type Mode = 'signin' | 'register' | 'ldap';
@@ -52,8 +53,7 @@ function LoginForm() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col px-6 pb-8 pt-[max(3rem,env(safe-area-inset-top))]">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/icons/icon-192.png" alt="" className="size-14 rounded-2xl shadow-card" />
+      <Logo size={44} tagline />
       <h1 className="mt-8 text-display font-bold">{mode === 'register' ? 'Create account' : 'Welcome back'}</h1>
       <p className="mt-2 text-ink-2">{mode === 'ldap' ? 'Sign in with your domain account.' : 'Your team’s knowledge, in one place.'}</p>
 

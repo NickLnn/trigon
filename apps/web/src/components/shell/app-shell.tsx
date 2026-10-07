@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
 import { InstallPrompt } from '@/components/ui/install-prompt';
+import { LogoMark } from '@/components/ui/logo';
 import { useSession } from '@/lib/session';
 import { useIsDesktop } from '@/lib/use-media';
 import { BottomNav } from './bottom-nav';
@@ -12,8 +13,7 @@ import { Sidebar } from './sidebar';
 function Splash() {
   return (
     <div className="grid h-dvh place-items-center bg-bg">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/icons/icon-192.png" alt="" className="size-16 animate-pulse rounded-2xl" />
+      <LogoMark size={64} variant="tile" className="animate-pulse" />
     </div>
   );
 }

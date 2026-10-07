@@ -1,60 +1,71 @@
 import { ConfidentialClientApplication, CryptoProvider, LogLevel } from '@azure/msal-node';
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import type { EntraSettings } from '@trigon/shared';
+import { SettingsService } from '../settings/settings.service';
 
-const GRAPH = 'https://graph.microsoft.com/v1.0';
+export const GRAPH = 'https://graph.microsoft.com/v1.0';
 
-/** One MSAL confidential client shared by OIDC sign-in and Graph directory sync. */
+/**
+ * One MSAL confidential client shared by OIDC sign-in and Graph directory sync. Configuration comes
+ * from Settings, so the client is rebuilt whenever an admin changes the tenant, client id or secret.
+ */
 @Injectable()
 export class EntraClientService {
   private readonly logger = new Logger(EntraClientService.name);
-  private cca?: ConfidentialClientApplication;
+  private cca?: { fingerprint: string; client: ConfidentialClientApplication };
   readonly crypto = new CryptoProvider();
 
-  constructor(private readonly config: ConfigService) {}
-
-  get enabled() {
-    return this.config.get('ENTRA_ENABLED') === 'true';
+  constructor(private readonly settings: SettingsService) {
+    settings.changes.on('changed', (key) => key === 'entra' && (this.cca = undefined));
   }
 
-  get redirectUri(): string {
-    return (
-      this.config.get('ENTRA_REDIRECT_URI') ||
-      `${this.config.getOrThrow<string>('APP_URL')}/api/auth/entra/callback`
-    );
+  async enabled() {
+    const s = await this.settings.get('entra');
+    return s.enabled && !!s.tenantId && !!s.clientId && !!s.clientSecret;
   }
 
-  client(): ConfidentialClientApplication {
-    if (!this.enabled) throw new ServiceUnavailableException('Microsoft Entra ID is not enabled');
-    this.cca ??= new ConfidentialClientApplication({
+  redirectUri() {
+    return this.settings.entraRedirectUri();
+  }
+
+  /** Build a client for explicit settings (used by "Test connection" before saving). */
+  static build(s: Pick<EntraSettings, 'tenantId' | 'clientId' | 'clientSecret'>, logger?: Logger) {
+    return new ConfidentialClientApplication({
       auth: {
-        clientId: this.config.getOrThrow('ENTRA_CLIENT_ID'),
-        authority: `https://login.microsoftonline.com/${this.config.getOrThrow('ENTRA_TENANT_ID')}`,
-        clientSecret: this.config.getOrThrow('ENTRA_CLIENT_SECRET'),
+        clientId: s.clientId,
+        authority: `https://login.microsoftonline.com/${s.tenantId}`,
+        clientSecret: s.clientSecret!,
       },
       system: {
         loggerOptions: {
           logLevel: LogLevel.Warning,
           piiLoggingEnabled: false,
-          loggerCallback: (_level, message) => this.logger.warn(message),
+          loggerCallback: (_level, message) => logger?.warn(message),
         },
       },
     });
-    return this.cca;
   }
 
-  /** App-only Graph token (client credentials grant). Requires admin-consented Directory.Read.All / User.Read.All. */
-  private async appToken(): Promise<string> {
-    const result = await this.client().acquireTokenByClientCredential({
-      scopes: ['https://graph.microsoft.com/.default'],
-    });
+  async client(): Promise<ConfidentialClientApplication> {
+    const s = await this.settings.get('entra');
+    if (!(await this.enabled())) throw new ServiceUnavailableException('Microsoft Entra ID is not configured');
+    const fingerprint = `${s.tenantId}|${s.clientId}|${s.clientSecret}`;
+    if (this.cca?.fingerprint !== fingerprint) {
+      this.cca = { fingerprint, client: EntraClientService.build(s, this.logger) };
+    }
+    return this.cca.client;
+  }
+
+  /** App-only Graph token (client credentials grant). */
+  static async appToken(client: ConfidentialClientApplication): Promise<string> {
+    const result = await client.acquireTokenByClientCredential({ scopes: ['https://graph.microsoft.com/.default'] });
     if (!result?.accessToken) throw new ServiceUnavailableException('Could not acquire Graph token');
     return result.accessToken;
   }
 
   /** GET a Graph collection, following @odata.nextLink until exhausted. */
   async graphList<T>(path: string): Promise<T[]> {
-    const token = await this.appToken();
+    const token = await EntraClientService.appToken(await this.client());
     const out: T[] = [];
     let next: string | undefined = path.startsWith('http') ? path : `${GRAPH}${path}`;
     while (next) {

@@ -18,16 +18,16 @@ export class EntraAuthService {
     private readonly identity: IdentityService,
   ) {}
 
-  get enabled() {
-    return this.entra.enabled;
+  enabled() {
+    return this.entra.enabled();
   }
 
   async begin(returnTo: string): Promise<{ url: string; login: EntraLoginState }> {
     const { verifier, challenge } = await this.entra.crypto.generatePkceCodes();
     const state = this.entra.crypto.createNewGuid();
-    const url = await this.entra.client().getAuthCodeUrl({
+    const url = await (await this.entra.client()).getAuthCodeUrl({
       scopes: SCOPES,
-      redirectUri: this.entra.redirectUri,
+      redirectUri: await this.entra.redirectUri(),
       codeChallenge: challenge,
       codeChallengeMethod: 'S256',
       state,
@@ -38,10 +38,10 @@ export class EntraAuthService {
 
   async complete(code: string, state: string, login: EntraLoginState | undefined) {
     if (!login || login.state !== state) throw new BadRequestException('Invalid or expired sign-in state');
-    const result = await this.entra.client().acquireTokenByCode({
+    const result = await (await this.entra.client()).acquireTokenByCode({
       code,
       scopes: SCOPES,
-      redirectUri: this.entra.redirectUri,
+      redirectUri: await this.entra.redirectUri(),
       codeVerifier: login.verifier,
     });
     const claims = result.idTokenClaims as Record<string, unknown>;
