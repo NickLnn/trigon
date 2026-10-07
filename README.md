@@ -38,8 +38,13 @@ Typical flow: commit to `dev` (or a short-lived feature branch off `dev`) → ve
 
 ```bash
 cp .env.example .env        # then set POSTGRES_PASSWORD, JWT_ACCESS_SECRET, APP_URL
+# Synology/Xpenology Docker does not create bind-mount folders itself; the API runs as uid 1000.
+mkdir -p data/postgres data/redis data/storage && chown 1000:1000 data/storage
 docker compose up -d --build
 ```
+
+If a host port is already taken (DSM often uses 5432), change `POSTGRES_PORT` / `REDIS_PORT` / `WEB_PORT` in `.env` —
+containers talk to each other over the internal Docker network, so only the published port changes.
 
 Web on `:3000`, API on `:4000`, collaboration WebSocket on `:4001`. Database migrations run automatically
 when the API container starts. The first account you register becomes the admin.
