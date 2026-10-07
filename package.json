@@ -1,0 +1,29 @@
+{
+  "name": "trigon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trigon — open-source collaborative knowledge platform",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run build -w @trigon/shared && concurrently -n api,web -c blue,magenta \"npm run dev -w @trigon/api\" \"npm run dev -w @trigon/web\"",
+    "dev:api": "npm run dev -w @trigon/api",
+    "dev:web": "npm run dev -w @trigon/web",
+    "build": "npm run build -w @trigon/shared && npm run build -w @trigon/api && npm run build -w @trigon/web",
+    "typecheck": "npm run build -w @trigon/shared && npm run typecheck --workspaces --if-present",
+    "test": "npm run build -w @trigon/shared && npm run test --workspaces --if-present",
+    "db:generate": "npm run db:generate -w @trigon/api",
+    "db:migrate": "npm run db:migrate -w @trigon/api",
+    "infra:up": "docker compose up -d postgres redis",
+    "infra:down": "docker compose down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "~5.9.3"
+  }
+}

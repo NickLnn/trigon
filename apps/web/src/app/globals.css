@@ -1,0 +1,382 @@
+@import 'tailwindcss';
+
+/*
+ * Trigon design tokens — fintech-inspired: high contrast, generous radius, calm surfaces,
+ * one confident accent. Every colour is a CSS variable so dark mode is a token swap.
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+:root {
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --surface-2: #eff0f3;
+  --surface-3: #e4e6eb;
+  --ink: #191c1f;
+  --ink-2: #505a63;
+  --ink-3: #8b959e;
+  --line: #e6e8ec;
+  --accent: #0666eb;
+  --accent-ink: #ffffff;
+  --accent-soft: #e6effd;
+  --success: #00a86b;
+  --warning: #f5a623;
+  --danger: #e5383b;
+  --overlay: rgb(10 12 14 / 0.42);
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-float: 0 12px 32px -8px rgb(16 24 40 / 0.18), 0 4px 8px -4px rgb(16 24 40 / 0.08);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #000000;
+    --surface: #16171a;
+    --surface-2: #1f2125;
+    --surface-3: #2a2d32;
+    --ink: #f5f6f7;
+    --ink-2: #b4bcc4;
+    --ink-3: #7b858f;
+    --line: #26292e;
+    --accent: #3d8bff;
+    --accent-soft: #10264a;
+    --overlay: rgb(0 0 0 / 0.6);
+    --shadow-card: 0 0 0 1px rgb(255 255 255 / 0.04);
+    --shadow-float: 0 16px 40px -8px rgb(0 0 0 / 0.7);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #000000;
+  --surface: #16171a;
+  --surface-2: #1f2125;
+  --surface-3: #2a2d32;
+  --ink: #f5f6f7;
+  --ink-2: #b4bcc4;
+  --ink-3: #7b858f;
+  --line: #26292e;
+  --accent: #3d8bff;
+  --accent-soft: #10264a;
+  --overlay: rgb(0 0 0 / 0.6);
+  --shadow-card: 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shadow-float: 0 16px 40px -8px rgb(0 0 0 / 0.7);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-overlay: var(--overlay);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-mono-face), ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* Type scale: big confident titles, compact meta text */
+  --text-display: 2.125rem;
+  --text-display--line-height: 1.1;
+  --text-display--letter-spacing: -0.03em;
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.2;
+  --text-title--letter-spacing: -0.02em;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.3;
+
+  --radius-card: 1.25rem;
+  --radius-sheet: 1.75rem;
+  --radius-pill: 999px;
+
+  --shadow-card: var(--shadow-card);
+  --shadow-float: var(--shadow-float);
+
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior-y: none;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .glass {
+    background: color-mix(in oklab, var(--surface) 78%, transparent);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+  }
+  .press {
+    transition: transform 160ms var(--ease-spring), background-color 160ms;
+  }
+  .press:active {
+    transform: scale(0.97);
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+}
+
+/* ─── Editor (ProseMirror) ───────────────────────────────────────────── */
+.trigon-prose {
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  outline: none;
+  min-height: 50vh;
+}
+.trigon-prose > * + * {
+  margin-top: 0.75em;
+}
+.trigon-prose h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+  margin-top: 1.4em;
+}
+.trigon-prose h2 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: 1.3em;
+}
+.trigon-prose h3 {
+  font-size: 1.15rem;
+  font-weight: 650;
+  margin-top: 1.2em;
+}
+.trigon-prose ul {
+  list-style: disc;
+  padding-left: 1.4em;
+}
+.trigon-prose ol {
+  list-style: decimal;
+  padding-left: 1.4em;
+}
+.trigon-prose ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.trigon-prose ul[data-type='taskList'] li {
+  display: flex;
+  gap: 0.6em;
+  align-items: flex-start;
+}
+.trigon-prose ul[data-type='taskList'] li > label {
+  margin-top: 0.3em;
+}
+.trigon-prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.trigon-prose blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 1em;
+  color: var(--ink-2);
+}
+.trigon-prose hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 2em 0;
+}
+.trigon-prose img {
+  border-radius: 0.875rem;
+  max-width: 100%;
+  height: auto;
+}
+.trigon-prose img[data-importing='true'] {
+  opacity: 0.5;
+}
+.trigon-prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--surface-2);
+  border-radius: 0.4em;
+  padding: 0.15em 0.4em;
+}
+.trigon-prose pre {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  background: #0f1115;
+  color: #e6e9ef;
+  border-radius: 1rem;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  position: relative;
+}
+.trigon-prose pre[data-language]::before {
+  content: attr(data-language);
+  position: absolute;
+  top: 0.5rem;
+  right: 0.8rem;
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8b95a7;
+}
+.trigon-prose p.is-editor-empty:first-child::before,
+.trigon-prose .is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-3);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Syntax colours (highlight.js classes emitted by lowlight) */
+.hljs-comment,
+.hljs-quote {
+  color: #6b7689;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in {
+  color: #c792ea;
+}
+.hljs-string,
+.hljs-attr,
+.hljs-template-tag {
+  color: #a5e075;
+}
+.hljs-number,
+.hljs-literal,
+.hljs-symbol {
+  color: #f78c6c;
+}
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title {
+  color: #82aaff;
+}
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-name {
+  color: #ffcb6b;
+}
+.hljs-variable,
+.hljs-params,
+.hljs-property {
+  color: #e6e9ef;
+}
+.hljs-meta,
+.hljs-tag {
+  color: #89ddff;
+}
+.hljs-deletion {
+  color: #ff5370;
+}
+.hljs-addition {
+  color: #c3e88d;
+}
+
+/* Collaboration carets */
+.collaboration-carets__caret {
+  border-left: 2px solid;
+  border-right: none;
+  margin-left: -1px;
+  margin-right: -1px;
+  position: relative;
+  word-break: normal;
+  pointer-events: none;
+}
+.collaboration-carets__label {
+  position: absolute;
+  top: -1.4em;
+  left: -2px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.25em 0.45em;
+  border-radius: 0.4em 0.4em 0.4em 0;
+  color: #fff;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ─── Document viewers ───────────────────────────────────────────────── */
+.docx-host .docx-wrapper {
+  background: transparent !important;
+  padding: 0 !important;
+}
+.docx-host .docx-wrapper > section.docx {
+  box-shadow: var(--shadow-card) !important;
+  border-radius: 0.5rem;
+  margin-bottom: 1.25rem !important;
+}
+.pdf-page {
+  position: relative;
+  margin: 0 auto 1rem;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+.pdf-page canvas {
+  display: block;
+}
+.pdf-page .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  opacity: 1;
+  text-align: initial;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+}
+.pdf-page .textLayer span,
+.pdf-page .textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.pdf-page .textLayer span.pdf-hit {
+  background: rgb(255 210 0 / 0.45);
+  border-radius: 2px;
+}
+.pdf-page .textLayer span.pdf-hit-active {
+  background: rgb(255 140 0 / 0.6);
+}
+.pdf-page .textLayer ::selection {
+  background: rgb(6 102 235 / 0.3);
+}
