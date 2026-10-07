@@ -1,3 +1,5 @@
+<p align="center"><img src="apps/web/public/brand/trigon-lockup.jpg" alt="Trigon — Collaborative workspace" width="420"></p>
+
 # Trigon
 
 Open-source collaborative knowledge platform — a hybrid of Docmost, Notion and SharePoint — with a
@@ -80,7 +82,7 @@ npm run dev                 # api on :4000 (+ ws :4001), web on :3000
 | `npm test` | Unit tests (code detection, embed matching, …) |
 | `npm run db:generate` | Create a migration after editing `apps/api/src/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations |
-| `npm run icons -w @trigon/web` | Re-render PWA icons from `public/icons/icon.svg` |
+| `npm run icons -w @trigon/web` | Rebuild logo, app icons and favicon from `apps/web/brand-src/trigon-logo-original.png` |
 
 ## Architecture notes
 

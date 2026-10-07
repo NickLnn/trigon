@@ -393,3 +393,22 @@
     transform: translate(-50%, -48%) scale(0.97);
   }
 }
+
+/* Logo variant per theme (see components/ui/logo.tsx) */
+.brand-on-dark {
+  display: none !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .brand-on-dark {
+    display: inline-block !important;
+  }
+  :root:not([data-theme='light']) .brand-on-light {
+    display: none !important;
+  }
+}
+:root[data-theme='dark'] .brand-on-dark {
+  display: inline-block !important;
+}
+:root[data-theme='dark'] .brand-on-light {
+  display: none !important;
+}
