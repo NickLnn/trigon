@@ -16,11 +16,8 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, title: 'Trigon', statusBarStyle: 'default' },
   formatDetection: { telephone: false },
   icons: {
-    // src/app/favicon.ico (16–64px) is added automatically by Next.js; SVG stays sharp at any DPI.
-    icon: [
-      { url: '/icons/favicon.svg', type: 'image/svg+xml' },
-      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-    ],
+    // src/app/favicon.ico (16–64px) is added automatically by Next.js.
+    icon: [{ url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
     apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180' }],
   },
 };

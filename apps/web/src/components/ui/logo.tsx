@@ -1,21 +1,27 @@
 /* eslint-disable @next/next/no-img-element */
 
 /**
- * Trigon brand mark: two interlaced triangles (the trigon) joined by a single ribbon.
- * Artwork lives in /public/brand (transparent mark) and /public/icons (app-icon tiles).
- *   variant="mark" — bare symbol, works on light and dark backgrounds
- *   variant="tile" — app-icon tile (navy)
+ * Trigon brand mark, rendered from the master artwork (brand-src/trigon-logo-original.png via
+ * scripts/generate-icons.mjs). On light surfaces it sits on its navy tile, as in the original design;
+ * on dark surfaces the transparent cut-out is used. The switch is pure CSS (.brand-on-light/-dark).
  */
-export function LogoMark({ size = 32, variant = 'mark', className = '' }: { size?: number; variant?: 'mark' | 'tile'; className?: string }) {
+export function LogoMark({ size = 32, variant = 'auto', className = '' }: { size?: number; variant?: 'auto' | 'tile'; className?: string }) {
+  const tile = (
+    <img src="/icons/icon-192.png" width={size} height={size} alt="Trigon" draggable={false} className={`shrink-0 select-none ${className}`} />
+  );
+  if (variant === 'tile') return tile;
   return (
-    <img
-      src={variant === 'tile' ? '/icons/icon.svg' : '/brand/trigon-mark.svg'}
-      width={size}
-      height={size}
-      alt="Trigon"
-      className={`shrink-0 select-none ${className}`}
-      draggable={false}
-    />
+    <>
+      <span className="brand-on-light inline-flex">{tile}</span>
+      <img
+        src="/brand/trigon-mark.png"
+        width={size}
+        height={size}
+        alt="Trigon"
+        draggable={false}
+        className={`brand-on-dark shrink-0 select-none ${className}`}
+      />
+    </>
   );
 }
 
