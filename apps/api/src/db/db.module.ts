@@ -17,7 +17,9 @@ export const InjectDb = () => Inject(DB);
       provide: PG_POOL,
       inject: [ConfigService],
       useFactory: (config: ConfigService) =>
-        new Pool({ connectionString: config.getOrThrow<string>('DATABASE_URL'), max: 20 }),
+        // Without DATABASE_URL, pg falls back to PGHOST/PGUSER/PGPASSWORD/PGDATABASE (used in Docker,
+        // so passwords with URL-special characters need no escaping).
+        new Pool({ connectionString: config.get<string>('DATABASE_URL') || undefined, max: 20 }),
     },
     {
       provide: DB,

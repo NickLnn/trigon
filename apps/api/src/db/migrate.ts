@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { Pool } from 'pg';
 
 async function main() {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL || undefined });
   await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
   await migrate(drizzle(pool), { migrationsFolder: join(__dirname, '../../drizzle') });
   await pool.end();

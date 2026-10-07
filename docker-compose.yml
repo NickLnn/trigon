@@ -45,7 +45,13 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-trigon}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-trigon}
+      # Discrete PG* vars instead of a URL, so the password needs no URL-escaping.
+      DATABASE_URL: ''
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-trigon}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-trigon}
       REDIS_URL: redis://redis:6379
       API_PORT: 4000
       COLLAB_PORT: 4001
