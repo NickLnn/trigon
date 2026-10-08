@@ -35,13 +35,19 @@ export class PermissionsService {
     return best;
   }
 
+  /** The system role is a ceiling: viewers never get more than 'comment', whatever a space grants them. */
+  private cap(user: AuthUser, level: PermissionLevel | null): PermissionLevel | null {
+    if (user.role === 'viewer' && permissionRank(level) > permissionRank('comment')) return 'comment';
+    return level;
+  }
+
   async spaceLevel(user: AuthUser, spaceId: string): Promise<PermissionLevel | null> {
     if (user.role === 'admin') return 'manage';
     const rows = await this.db
       .select({ level: permissions.level })
       .from(permissions)
       .where(and(eq(permissions.resourceType, 'space'), eq(permissions.resourceId, spaceId), await this.subjectFilter(user.id)));
-    return this.strongest(rows.map((r) => r.level));
+    return this.cap(user, this.strongest(rows.map((r) => r.level)));
   }
 
   /** Space ids where the user holds any grant, with the level — used to list spaces. */
@@ -54,11 +60,12 @@ export class PermissionsService {
     for (const r of rows) {
       if (permissionRank(r.level) > permissionRank(out.get(r.spaceId))) out.set(r.spaceId, r.level);
     }
+    for (const [k, v] of out) out.set(k, this.cap(user, v)!);
     return out;
   }
 
   /** Document id + all ancestor ids, nearest first, and the owning space. */
-  private async lineage(documentId: string): Promise<{ spaceId: string; ids: string[] }> {
+  async lineage(documentId: string): Promise<{ spaceId: string; ids: string[] }> {
     const result = await this.db.execute<{ id: string; space_id: string }>(sql`
       WITH RECURSIVE chain AS (
         SELECT id, parent_id, space_id, 0 AS depth FROM ${documents} WHERE id = ${documentId} AND deleted_at IS NULL
@@ -86,7 +93,7 @@ export class PermissionsService {
           await this.subjectFilter(user.id),
         ),
       );
-    return { level: this.strongest(rows.map((r) => r.level)), spaceId };
+    return { level: this.cap(user, this.strongest(rows.map((r) => r.level))), spaceId };
   }
 
   async assertSpace(user: AuthUser, spaceId: string, required: PermissionLevel) {

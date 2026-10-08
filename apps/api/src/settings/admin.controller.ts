@@ -14,7 +14,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { hash } from '@node-rs/argon2';
-import type { AdminGroup, AdminUser, AuthProvider } from '@trigon/shared';
+import type { AdminGroup, AdminUser, AuthProvider, SystemRole } from '@trigon/shared';
 import { IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { and, asc, count, desc, eq, ilike, isNull, ne, or, sql } from 'drizzle-orm';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
@@ -26,11 +26,11 @@ class CreateUserDto {
   @IsEmail() email: string;
   @IsString() @MinLength(1) @MaxLength(120) displayName: string;
   @IsString() @MinLength(10) @MaxLength(200) password: string;
-  @IsIn(['admin', 'member', 'guest']) role: 'admin' | 'member' | 'guest';
+  @IsIn(['admin', 'editor', 'viewer']) role: SystemRole;
 }
 
 class UpdateUserDto {
-  @IsOptional() @IsIn(['admin', 'member', 'guest']) role?: 'admin' | 'member' | 'guest';
+  @IsOptional() @IsIn(['admin', 'editor', 'viewer']) role?: SystemRole;
   @IsOptional() active?: boolean;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(120) displayName?: string;
 }
@@ -69,7 +69,8 @@ export class AdminController {
         active: users.active,
         lastLoginAt: users.lastLoginAt,
         createdAt: users.createdAt,
-        providers: sql<AuthProvider[]>`coalesce((select array_agg(distinct a.provider) from ${accounts} a where a.user_id = ${users.id}), '{}')`,
+        // ::text[] — node-postgres can't decode arrays of a custom enum type and would return the raw "{local}" string.
+        providers: sql<AuthProvider[]>`coalesce((select array_agg(distinct a.provider::text) from ${accounts} a where a.user_id = ${users.id}), '{}'::text[])`,
         groups: sql<number>`(select count(*)::int from ${groupMembers} gm where gm.user_id = ${users.id})`,
       })
       .from(users)

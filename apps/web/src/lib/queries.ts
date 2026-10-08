@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DocumentKind, DocumentNode, PermissionLevel, SpaceSummary } from '@trigon/shared';
+import type { DisplayStatus, DocumentKind, DocumentNode, EffectiveGrant, HealthStats, PageType, PermissionLevel, SpaceStats, SpaceSummary } from '@trigon/shared';
 import { api } from './api';
 
 export interface RecentDoc {
@@ -13,7 +13,11 @@ export interface RecentDoc {
   spaceId: string;
   spaceName: string;
   spaceColor: string | null;
+  spaceIcon: string | null;
+  pageType: PageType;
+  status: DisplayStatus;
   updatedAt: string;
+  updatedByName: string | null;
 }
 
 export interface SearchHit {
@@ -37,7 +41,18 @@ export interface DocumentDetail {
   mimeType: string | null;
   sizeBytes: number | null;
   updatedAt: string;
+  createdAt: string;
   importHtml: string | null;
+  pageType: PageType;
+  status: DisplayStatus;
+  verifiedAt: string | null;
+  reviewIntervalDays: number;
+  tags: string[];
+  ownerId: string | null;
+  ownerName: string | null;
+  verifiedByName: string | null;
+  updatedByName: string | null;
+  createdByName: string | null;
   myPermission: PermissionLevel;
 }
 
@@ -168,3 +183,33 @@ export function findPath(nodes: DocumentNode[], id: string, trail: DocumentNode[
   }
   return null;
 }
+
+export const useHealth = () => useQuery({ queryKey: ['health'], queryFn: () => api<HealthStats>('/documents/health'), staleTime: 60_000 });
+
+export const useSpaceStats = (id: string) => useQuery({ queryKey: ['space-stats', id], queryFn: () => api<SpaceStats>(`/spaces/${id}/stats`) });
+
+/** Invalidate everything that shows review state after a page changes. */
+function refreshReview(qc: ReturnType<typeof useQueryClient>, id: string) {
+  qc.invalidateQueries({ queryKey: ['document', id] });
+  qc.invalidateQueries({ queryKey: ['health'] });
+  qc.invalidateQueries({ queryKey: ['recent'] });
+  qc.invalidateQueries({ queryKey: ['tree'] });
+  qc.invalidateQueries({ queryKey: ['space-stats'] });
+}
+
+export function useVerifyDocument(id: string) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: () => api(`/documents/${id}/verify`, { method: 'POST' }), onSuccess: () => refreshReview(qc, id) });
+}
+
+export function usePatchDocumentMeta(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: { pageType?: PageType; status?: 'none' | 'draft'; tags?: string[]; reviewIntervalDays?: number | null; ownerId?: string | null }) =>
+      api(`/documents/${id}`, { method: 'PATCH', json: patch }),
+    onSuccess: () => refreshReview(qc, id),
+  });
+}
+
+export const useEffectiveGrants = (type: 'space' | 'document', id: string, enabled: boolean) =>
+  useQuery({ queryKey: ['grants', type, id], queryFn: () => api<EffectiveGrant[]>(`/permissions/effective/${type}/${id}`), enabled });
