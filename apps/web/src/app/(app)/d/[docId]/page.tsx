@@ -1,14 +1,19 @@
 'use client';
 
 import { isTextFile } from '@trigon/shared';
-import { Download, Smile, Users } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Download, Info, Share2, Smile } from 'lucide-react';
 import dynamic from 'next/dynamic';
-import { use, useEffect, useRef, useState } from 'react';
-import type { ConnectionStatus } from '@/components/editor/collaborative-editor';
-import { PageHeader } from '@/components/shell/page-header';
-import { CustomIcon, fileFlavor } from '@/components/ui/doc-icon';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ConnectionStatus, OutlineItem, Peer } from '@/components/editor/collaborative-editor';
+import { DocDetails, VerifyButton } from '@/components/shell/doc-details';
+import { ShareSheet } from '@/components/shell/share-sheet';
+import { BottomSheet } from '@/components/ui/bottom-sheet';
+import { CustomIcon, fileFlavor, relativeTime } from '@/components/ui/doc-icon';
 import { IconPicker } from '@/components/ui/icon-picker';
-import { useDocument, useUpdateDocument } from '@/lib/queries';
+import { StatusBadge, TagChip } from '@/components/ui/status-badge';
+import { findPath, useDocument, useSpace, useTree, useUpdateDocument, type DocumentDetail } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 
 // Heavy, browser-only modules load on demand.
@@ -37,28 +42,6 @@ function PageIcon({ id, icon, editable }: { id: string; icon: string | null; edi
       )}
       <IconPicker open={open} onOpenChange={setOpen} current={icon} onSelect={(v) => update.mutate({ icon: v ?? '' })} />
     </>
-  );
-}
-
-function StatusPill({ status, peers }: { status: ConnectionStatus; peers: number }) {
-  const dot = status === 'connected' ? 'bg-success' : status === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger';
-  return (
-    <span className="flex items-center gap-1.5 rounded-pill bg-surface px-3 py-1.5 text-meta font-medium shadow-card">
-      <span className={`size-2 rounded-full ${dot}`} />
-      {status === 'connected' ? (
-        peers > 1 ? (
-          <>
-            <Users className="size-3.5" /> {peers}
-          </>
-        ) : (
-          'Live'
-        )
-      ) : status === 'connecting' ? (
-        'Connecting'
-      ) : (
-        'Offline'
-      )}
-    </span>
   );
 }
 
@@ -93,30 +76,134 @@ function TitleInput({ id, title, editable }: { id: string; title: string; editab
         }
       }}
       placeholder="Untitled"
-      className="field-sizing-content w-full resize-none bg-transparent text-display font-bold outline-none placeholder:text-ink-3"
+      className="field-sizing-content w-full resize-none bg-transparent text-[1.75rem] font-bold leading-tight tracking-tight outline-none placeholder:text-ink-3 md:text-display"
       aria-label="Page title"
     />
   );
 }
 
+/** Space › folder › … trail above the title. */
+function Breadcrumb({ doc }: { doc: DocumentDetail }) {
+  const { data: space } = useSpace(doc.spaceId);
+  const { data: tree } = useTree(doc.spaceId);
+  const trail = useMemo(() => (tree ? (findPath(tree, doc.id) ?? []).slice(0, -1) : []), [tree, doc.id]);
+  return (
+    <nav className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-sm text-ink-3" aria-label="Breadcrumb">
+      <Link href={`/spaces/${doc.spaceId}`} className="hover:text-ink">
+        {space?.name ?? '…'}
+      </Link>
+      {trail.map((n) => (
+        <span key={n.id} className="flex items-center gap-1">
+          <ChevronRight className="size-3.5" />
+          <span>{n.title}</span>
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+function Presence({ status, peers }: { status: ConnectionStatus; peers: Peer[] }) {
+  const dot = status === 'connected' ? 'bg-success' : status === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger';
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex -space-x-1.5">
+        {peers.slice(0, 5).map((p, i) => (
+          <span
+            key={`${p.name}-${i}`}
+            title={p.name}
+            className="grid size-7 place-items-center rounded-full border-2 border-surface text-[0.6875rem] font-bold text-white"
+            style={{ background: p.color }}
+          >
+            {p.name
+              .split(/\s+/)
+              .map((x) => x[0])
+              .slice(0, 2)
+              .join('')
+              .toUpperCase()}
+          </span>
+        ))}
+      </div>
+      <span className="flex items-center gap-1.5 text-meta font-medium text-ink-2">
+        <span className={`size-2 rounded-full ${dot}`} />
+        {status === 'connected' ? (peers.length > 1 ? `${peers.length} live` : 'Live') : status === 'connecting' ? 'Connecting' : 'Offline'}
+      </span>
+    </div>
+  );
+}
+
+function Outline({ items }: { items: OutlineItem[] }) {
+  if (!items.length) return null;
+  const jump = (i: number) => document.querySelectorAll('.trigon-prose h1, .trigon-prose h2, .trigon-prose h3, .trigon-prose h4')[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return (
+    <section>
+      <h3 className="mb-1.5 text-meta font-semibold uppercase tracking-wider text-ink-3">On this page</h3>
+      <ul className="space-y-0.5">
+        {items.map((h, i) => (
+          <li key={`${h.text}-${i}`}>
+            <button onClick={() => jump(i)} className="w-full truncate rounded-md py-1 text-left text-sm text-ink-2 hover:text-accent" style={{ paddingLeft: (h.level - 1) * 10 }}>
+              {h.text}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export default function DocumentPage({ params }: { params: Promise<{ docId: string }> }) {
   const { docId } = use(params);
+  const router = useRouter();
   const { user } = useSession();
   const { data: doc, error, isPending } = useDocument(docId);
-  const [status, setStatus] = useState<{ s: ConnectionStatus; peers: number }>({ s: 'connecting', peers: 1 });
+  const [conn, setConn] = useState<ConnectionStatus>('connecting');
+  const [peers, setPeers] = useState<Peer[]>([]);
+  const [outline, setOutline] = useState<OutlineItem[]>([]);
+  const [sheet, setSheet] = useState<'share' | 'details' | null>(null);
+  const onStatus = useCallback((s: ConnectionStatus) => setConn(s), []);
 
   if (error) return <p className="p-10 text-center text-ink-2">{error.message}</p>;
   if (isPending || !doc || !user) return <div className="mx-auto mt-24 h-8 w-2/3 max-w-xl animate-pulse rounded-lg bg-surface-2" />;
 
   const canEdit = doc.myPermission === 'edit' || doc.myPermission === 'manage';
   const contentUrl = `/files/${doc.id}/content`;
+  const sheets = (
+    <>
+      {sheet === 'share' && <ShareSheet open onOpenChange={(v) => !v && setSheet(null)} type="document" id={doc.id} name={doc.title} />}
+      <BottomSheet open={sheet === 'details'} onOpenChange={(v) => !v && setSheet(null)} title="Details">
+        <DocDetails doc={doc} />
+      </BottomSheet>
+    </>
+  );
+  const toolbar = (
+    <div className="flex items-center gap-1.5">
+      <VerifyButton doc={doc} compact />
+      <button onClick={() => setSheet('share')} className="press inline-flex items-center gap-1.5 rounded-pill border border-line bg-surface px-3.5 py-2 text-sm font-semibold">
+        <Share2 className="size-4" /> <span className="hidden sm:inline">Share</span>
+      </button>
+      <button onClick={() => setSheet('details')} className="press grid size-9 place-items-center rounded-full border border-line bg-surface xl:hidden" aria-label="Details">
+        <Info className="size-4" />
+      </button>
+    </div>
+  );
 
   if (doc.kind === 'file') {
     const flavor = fileFlavor(doc.mimeType, doc.title);
     return (
       <div className="flex h-[calc(100dvh-4.25rem-env(safe-area-inset-bottom))] flex-col md:h-dvh">
-        <div className="glass sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-line px-4 pt-safe">
-          <h1 className="min-w-0 flex-1 truncate font-semibold">{doc.title}</h1>
+        <div className="sticky top-0 z-20 flex items-center gap-2 border-b border-line bg-surface px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
+          <button onClick={() => router.back()} className="press grid size-9 shrink-0 place-items-center rounded-full hover:bg-surface-2" aria-label="Back">
+            <ArrowLeft className="size-5" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate font-semibold">{doc.title}</h1>
+            <p className="truncate text-meta text-ink-3">
+              {doc.updatedByName ? `${doc.updatedByName} · ` : ''}
+              {relativeTime(doc.updatedAt)}
+            </p>
+          </div>
+          <button onClick={() => setSheet('share')} className="press grid size-9 place-items-center rounded-full hover:bg-surface-2" aria-label="Share">
+            <Share2 className="size-5" />
+          </button>
           <a href={`/api${contentUrl}`} download={doc.title} className="press grid size-9 place-items-center rounded-full hover:bg-surface-2" aria-label="Download">
             <Download className="size-5" />
           </a>
@@ -155,6 +242,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
             </div>
           )}
         </div>
+        {sheets}
       </div>
     );
   }
@@ -163,23 +251,63 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
     return <p className="p-10 text-center text-ink-2">This is a folder — open it from its space.</p>;
   }
 
+  const typeLabel = doc.pageType === 'runbook' ? 'Runbook' : doc.pageType === 'kb' ? 'KB article' : null;
+
   return (
-    <article>
-      <PageHeader back title="" actions={<StatusPill status={status.s} peers={status.peers} />} />
-      <div className="mx-auto max-w-3xl px-5 pb-32 md:px-10">
-        <PageIcon id={doc.id} icon={doc.icon} editable={canEdit} />
-        <TitleInput id={doc.id} title={doc.title} editable={canEdit} />
-        {!canEdit && <p className="mb-2 text-meta text-ink-3">View only</p>}
-        <div className="mt-4">
-          <CollaborativeEditor
-            documentId={doc.id}
-            user={{ id: user.id, displayName: user.displayName }}
-            editable={canEdit}
-            initialHtml={doc.importHtml}
-            onStatusChange={(s, peers) => setStatus({ s, peers })}
-          />
+    <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_17rem]">
+      <article className="min-h-dvh bg-surface xl:border-r xl:border-line">
+        {/* Top bar */}
+        <div className="sticky top-0 z-20 flex items-center gap-2 bg-surface/90 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur md:px-6">
+          <button onClick={() => router.back()} className="press grid size-9 shrink-0 place-items-center rounded-full hover:bg-surface-2 md:hidden" aria-label="Back">
+            <ArrowLeft className="size-5" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <Breadcrumb doc={doc} />
+          </div>
+          {toolbar}
         </div>
-      </div>
-    </article>
+
+        <div className="mx-auto max-w-3xl px-5 pb-32 pt-4 md:px-10">
+          <PageIcon id={doc.id} icon={doc.icon} editable={canEdit} />
+          <TitleInput id={doc.id} title={doc.title} editable={canEdit} />
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <StatusBadge status={doc.status} since={doc.verifiedAt} />
+            {typeLabel && <span className="inline-flex items-center rounded-pill bg-accent-soft px-2 py-0.5 text-[0.6875rem] font-semibold text-accent">{typeLabel}</span>}
+            {doc.tags.map((t) => (
+              <TagChip key={t}>{t}</TagChip>
+            ))}
+            <span className="text-meta text-ink-3">
+              {doc.updatedByName ? `Edited by ${doc.updatedByName} · ` : 'Edited '}
+              {relativeTime(doc.updatedAt)}
+              {!canEdit && ' · View only'}
+            </span>
+          </div>
+          <div className="mt-5">
+            <CollaborativeEditor
+              documentId={doc.id}
+              user={{ id: user.id, displayName: user.displayName }}
+              editable={canEdit}
+              initialHtml={doc.importHtml}
+              onStatusChange={onStatus}
+              onPeers={setPeers}
+              onOutline={setOutline}
+            />
+          </div>
+        </div>
+      </article>
+
+      {/* Right rail (wide screens) */}
+      <aside className="hidden xl:block">
+        <div className="sticky top-0 max-h-dvh space-y-6 overflow-y-auto p-5">
+          <Presence status={conn} peers={peers} />
+          <Outline items={outline} />
+          <section>
+            <h3 className="mb-1 text-meta font-semibold uppercase tracking-wider text-ink-3">Details</h3>
+            <DocDetails doc={doc} />
+          </section>
+        </div>
+      </aside>
+      {sheets}
+    </div>
   );
 }

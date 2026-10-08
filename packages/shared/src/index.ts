@@ -9,8 +9,13 @@ export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
 export const GROUP_SOURCES = ['local', 'entra', 'ldap'] as const;
 export type GroupSource = (typeof GROUP_SOURCES)[number];
 
-/** Workspace-wide role. Admins bypass resource permissions. */
-export const SYSTEM_ROLES = ['admin', 'member', 'guest'] as const;
+/**
+ * Workspace-wide role — the ceiling on what someone can do anywhere:
+ *   admin  — everything, including Settings and every space
+ *   editor — can create spaces and edit wherever they've been granted edit
+ *   viewer — read-only everywhere, whatever a space grants them
+ */
+export const SYSTEM_ROLES = ['admin', 'editor', 'viewer'] as const;
 export type SystemRole = (typeof SYSTEM_ROLES)[number];
 
 /**
@@ -56,6 +61,15 @@ export interface SpaceSummary {
   myPermission: PermissionLevel;
 }
 
+/** What a page is for — drives filter chips and the runbook layout. */
+export const PAGE_TYPES = ['page', 'runbook', 'kb'] as const;
+export type PageType = (typeof PAGE_TYPES)[number];
+
+/** Review state. "stale" is derived: verified, but older than its review interval. */
+export const DOC_STATUSES = ['none', 'draft', 'verified'] as const;
+export type DocStatus = (typeof DOC_STATUSES)[number];
+export type DisplayStatus = DocStatus | 'stale';
+
 export interface DocumentNode {
   id: string;
   spaceId: string;
@@ -65,8 +79,41 @@ export interface DocumentNode {
   icon: string | null;
   position: number;
   mimeType: string | null;
+  pageType: PageType;
+  status: DisplayStatus;
   updatedAt: string;
   children?: DocumentNode[];
+}
+
+export interface HealthStats {
+  total: number;
+  verified: number;
+  stale: number;
+  drafts: number;
+  /** Fresh verified share of reviewed-or-draft pages, 0–100. */
+  score: number;
+  needsReview: { id: string; title: string; icon: string | null; spaceId: string; spaceName: string; status: DisplayStatus; since: string }[];
+}
+
+export interface SpaceStats {
+  docs: number;
+  verified: number;
+  stale: number;
+}
+
+/** A permission as shown in the share dialog — direct or inherited from a parent folder / the space. */
+export interface EffectiveGrant {
+  id: string;
+  subjectType: 'user' | 'group' | 'everyone';
+  subjectId: string | null;
+  subjectName: string;
+  subjectDetail: string | null;
+  level: PermissionLevel;
+  /** Where the grant lives. */
+  resourceType: 'space' | 'document';
+  resourceId: string;
+  resourceName: string;
+  inherited: boolean;
 }
 
 export interface EmbedInfo {

@@ -10,11 +10,13 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
-import { and, desc, eq, isNull, max, sql } from 'drizzle-orm';
+import { DOC_STATUSES, PAGE_TYPES, type DisplayStatus, type HealthStats } from '@trigon/shared';
+import { ArrayMaxSize, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { and, asc, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
-import { documents, spaces } from '../db/schema';
+import { documents, spaces, users } from '../db/schema';
 import { PermissionsService } from '../permissions/permissions.service';
 
 class CreateDocumentDto {
@@ -51,11 +53,27 @@ class ImportDocumentDto {
   @MaxLength(255)
   title: string;
 
-  /** Sanitised HTML produced client-side from the uploaded .md / .html file. */
+  /** Sanitised HTML produced client-side from the uploaded .md / .html file (or a template). */
   @IsString()
   @MaxLength(5_000_000)
   html: string;
+
+  @IsOptional()
+  @IsIn(PAGE_TYPES as unknown as string[])
+  pageType?: 'page' | 'runbook' | 'kb';
+
+  @IsOptional()
+  @IsIn(['none', 'draft'])
+  status?: 'none' | 'draft';
 }
+
+/** Default review interval when a page doesn't set its own. */
+export const DEFAULT_REVIEW_DAYS = 180;
+
+/** Review status as shown to people: "stale" once a verified page is older than its review interval. */
+export const displayStatus = sql<DisplayStatus>`CASE WHEN ${documents.status} = 'verified' AND ${documents.verifiedAt} + make_interval(days => coalesce(${documents.reviewIntervalDays}, ${DEFAULT_REVIEW_DAYS})) < now() THEN 'stale' ELSE ${documents.status}::text END`;
+
+const editor = alias(users, 'editor');
 
 /** Rough HTML → plain text, only used to make imported pages searchable before first open. */
 function htmlToText(html: string) {
@@ -82,6 +100,34 @@ class UpdateDocumentDto {
   @IsString()
   @MaxLength(64)
   icon?: string;
+
+  @IsOptional()
+  @IsIn(PAGE_TYPES as unknown as string[])
+  pageType?: 'page' | 'runbook' | 'kb';
+
+  /** Use POST /documents/:id/verify to mark verified. */
+  @IsOptional()
+  @IsIn(DOC_STATUSES.filter((s) => s !== 'verified'))
+  status?: 'none' | 'draft';
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  tags?: string[];
+
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  reviewIntervalDays?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  ownerId?: string | null;
 
   /** Move: null puts the document at the space root. */
   @IsOptional()
@@ -127,6 +173,7 @@ export class DocumentsController {
         title: dto.title?.trim() || (dto.kind === 'folder' ? 'New folder' : 'Untitled'),
         icon: dto.icon,
         position: (last ?? 0) + 1,
+        ownerId: user.id,
         createdById: user.id,
         updatedById: user.id,
       })
@@ -158,6 +205,9 @@ export class DocumentsController {
         kind: 'page',
         title: dto.title.trim() || 'Imported page',
         importHtml: dto.html,
+        pageType: dto.pageType ?? 'page',
+        status: dto.status ?? 'none',
+        ownerId: user.id,
         textContent: htmlToText(dto.html).slice(0, 1_000_000),
         position: (last ?? 0) + 1,
         createdById: user.id,
@@ -220,10 +270,15 @@ export class DocumentsController {
         spaceId: documents.spaceId,
         spaceName: spaces.name,
         spaceColor: spaces.color,
+        spaceIcon: spaces.icon,
+        pageType: documents.pageType,
+        status: displayStatus,
         updatedAt: documents.updatedAt,
+        updatedByName: editor.displayName,
       })
       .from(documents)
       .innerJoin(spaces, eq(spaces.id, documents.spaceId))
+      .leftJoin(editor, eq(editor.id, documents.updatedById))
       .where(
         and(
           isNull(documents.deletedAt),
@@ -233,6 +288,49 @@ export class DocumentsController {
       )
       .orderBy(desc(documents.updatedAt))
       .limit(20);
+  }
+
+  /** Knowledge-base health for the home screen: how much is verified, and what needs review. */
+  @Get('health')
+  async health(@CurrentUser() user: AuthUser): Promise<HealthStats> {
+    const levels = await this.perms.spaceLevels(user);
+    const spaceIds = user.role === 'admin' ? null : [...levels.keys()];
+    const empty = { total: 0, verified: 0, stale: 0, drafts: 0, score: 0, needsReview: [] };
+    if (spaceIds && !spaceIds.length) return empty;
+    const scope = and(
+      isNull(documents.deletedAt),
+      eq(documents.kind, 'page'),
+      spaceIds ? sql`${documents.spaceId} = ANY(${spaceIds}::uuid[])` : undefined,
+    );
+    const [counts] = await this.db
+      .select({
+        total: sql<number>`count(*)::int`,
+        verified: sql<number>`count(*) filter (where ${displayStatus} = 'verified')::int`,
+        stale: sql<number>`count(*) filter (where ${displayStatus} = 'stale')::int`,
+        drafts: sql<number>`count(*) filter (where ${displayStatus} = 'draft')::int`,
+      })
+      .from(documents)
+      .where(scope);
+    const needsReview = await this.db
+      .select({
+        id: documents.id,
+        title: documents.title,
+        icon: documents.icon,
+        spaceId: documents.spaceId,
+        spaceName: spaces.name,
+        status: displayStatus,
+        since: sql<string>`coalesce(${documents.verifiedAt}, ${documents.updatedAt})`,
+      })
+      .from(documents)
+      .innerJoin(spaces, eq(spaces.id, documents.spaceId))
+      .where(and(scope, sql`${displayStatus} in ('stale', 'draft')`))
+      .orderBy(asc(sql`coalesce(${documents.verifiedAt}, ${documents.updatedAt})`))
+      .limit(50);
+    return {
+      ...counts,
+      score: counts.total ? Math.round((counts.verified / counts.total) * 100) : 0,
+      needsReview: needsReview.map((n) => ({ ...n, since: new Date(n.since).toISOString() })),
+    };
   }
 
   @Get(':id')
@@ -250,12 +348,34 @@ export class DocumentsController {
         importHtml: documents.importHtml,
         mimeType: documents.mimeType,
         sizeBytes: documents.sizeBytes,
+        pageType: documents.pageType,
+        status: displayStatus,
+        verifiedAt: documents.verifiedAt,
+        reviewIntervalDays: documents.reviewIntervalDays,
+        tags: documents.tags,
+        ownerId: documents.ownerId,
+        verifiedById: documents.verifiedById,
+        updatedById: documents.updatedById,
+        createdById: documents.createdById,
         createdAt: documents.createdAt,
         updatedAt: documents.updatedAt,
       })
       .from(documents)
       .where(eq(documents.id, id));
-    return { ...doc, myPermission: level };
+    const peopleIds = [doc.ownerId, doc.verifiedById, doc.updatedById, doc.createdById].filter((v): v is string => !!v);
+    const people = peopleIds.length
+      ? await this.db.select({ id: users.id, name: users.displayName }).from(users).where(inArray(users.id, peopleIds))
+      : [];
+    const name = (uid: string | null) => people.find((p) => p.id === uid)?.name ?? null;
+    return {
+      ...doc,
+      reviewIntervalDays: doc.reviewIntervalDays ?? DEFAULT_REVIEW_DAYS,
+      ownerName: name(doc.ownerId ?? doc.createdById),
+      verifiedByName: name(doc.verifiedById),
+      updatedByName: name(doc.updatedById),
+      createdByName: name(doc.createdById),
+      myPermission: level,
+    };
   }
 
   @Patch(':id')
@@ -278,6 +398,14 @@ export class DocumentsController {
       .where(eq(documents.id, id))
       .returning({ id: documents.id, title: documents.title, parentId: documents.parentId, position: documents.position });
     return doc;
+  }
+
+  /** Mark a page as verified (reviewed and correct) — resets its review clock. */
+  @Post(':id/verify')
+  async verify(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    await this.perms.assertDocument(user, id, 'edit');
+    await this.db.update(documents).set({ status: 'verified', verifiedAt: new Date(), verifiedById: user.id }).where(eq(documents.id, id));
+    return { ok: true };
   }
 
   /** Soft delete; children disappear with their parent from the tree. */

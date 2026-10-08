@@ -112,17 +112,17 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
           e.stopPropagation();
           toggle(node.id);
         }}
-        className={`grid size-5 shrink-0 place-items-center rounded text-ink-3 hover:bg-surface-3 ${hasChildren ? '' : 'invisible'}`}
+        className={`grid size-5 shrink-0 place-items-center rounded text-navy-ink-3 hover:bg-navy-3 ${hasChildren ? '' : 'invisible'}`}
       >
         <ChevronRight className={`size-3.5 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
       </span>
-      <DocIcon kind={node.kind} mimeType={node.mimeType} title={node.title} emoji={node.icon} size="sm" />
+      <DocIcon kind={node.kind} mimeType={node.mimeType} title={node.title} emoji={node.icon} size="sm" bare pageType={node.pageType} />
       <span className="truncate">{node.title}</span>
     </>
   );
 
   const cls = `relative flex w-full items-center gap-1.5 rounded-lg py-1 pr-8 text-[0.875rem] ${
-    zone === 'inside' ? 'bg-accent-soft ring-2 ring-accent' : active ? 'bg-accent-soft font-medium text-accent' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
+    zone === 'inside' ? 'bg-navy-3 text-white ring-2 ring-accent' : active ? 'bg-navy-3 font-medium text-white' : 'text-navy-ink-2 hover:bg-navy-2 hover:text-white'
   }`;
   const indicator = zone === 'before' || zone === 'after' ? (
     <span
@@ -151,7 +151,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
             canEdit={canEdit}
             open={menuOpen}
             onOpenChange={setMenuOpen}
-            triggerClassName={menuOpen ? '' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'}
+            triggerClassName={`text-navy-ink-3 hover:bg-navy-3 hover:text-white data-[state=open]:bg-navy-3 ${menuOpen ? '' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'}`}
           />
         </div>
       </div>
@@ -235,12 +235,12 @@ export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: stri
     return (
       <div className="space-y-2 px-2 py-1">
         {[70, 55, 80].map((w) => (
-          <div key={w} className="h-5 animate-pulse rounded bg-surface-2" style={{ width: `${w}%` }} />
+          <div key={w} className="h-5 animate-pulse rounded bg-navy-2" style={{ width: `${w}%` }} />
         ))}
       </div>
     );
   }
-  if (!data?.length) return <p className="px-3 py-1 text-meta text-ink-3">Empty — drop files here</p>;
+  if (!data?.length) return <p className="px-3 py-1 text-meta text-navy-ink-3">Empty — drop files here</p>;
   return (
     <ul className="space-y-px">
       {data.map((n) => (
