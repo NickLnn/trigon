@@ -1,6 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 import { fileExtension, iconImageId, type DocumentKind } from '@trigon/shared';
-import { File, FileSpreadsheet, FileText, FileType, Folder, Image as ImageIcon, NotebookPen, Presentation, Workflow } from 'lucide-react';
+import { BookOpenText, File, FileSpreadsheet, FileText, FileType, Folder, Image as ImageIcon, ListChecks, NotebookPen, Presentation, Workflow } from 'lucide-react';
 
 export type FileFlavor = 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'vsdx' | 'image' | 'file';
 
@@ -54,6 +54,8 @@ export function DocIcon({
   title,
   emoji,
   size = 'md',
+  bare = false,
+  pageType,
 }: {
   kind: DocumentKind;
   mimeType?: string | null;
@@ -61,14 +63,23 @@ export function DocIcon({
   /** Custom icon value (emoji or img:<id>). */
   emoji?: string | null;
   size?: keyof typeof BOX;
+  /** Glyph only, no tinted bubble — for the navy sidebar. */
+  bare?: boolean;
+  pageType?: string;
 }) {
   if (emoji) return <CustomIcon icon={emoji} size={size} />;
   const box = `${BOX[size]} grid shrink-0 place-items-center`;
-  if (kind === 'folder') return <span className={`${box} ${tone.folder}`}><Folder className={GLYPH_SIZE[size]} /></span>;
-  if (kind === 'page') return <span className={`${box} ${tone.page}`}><NotebookPen className={GLYPH_SIZE[size]} /></span>;
-  const flavor = fileFlavor(mimeType, title);
-  const Icon = GLYPH[flavor];
-  return <span className={`${box} ${tone[flavor]}`}><Icon className={GLYPH_SIZE[size]} /></span>;
+  const flavor = kind === 'file' ? fileFlavor(mimeType, title) : null;
+  const Icon = kind === 'folder' ? Folder : kind === 'page' ? (pageType === 'runbook' ? ListChecks : pageType === 'kb' ? BookOpenText : NotebookPen) : GLYPH[flavor!];
+  const toneKey = kind === 'folder' ? 'folder' : kind === 'page' ? 'page' : flavor!;
+  if (bare) {
+    const bareTone: Record<string, string> = {
+      folder: 'text-navy-warn', page: 'text-[#8fb2ff]', pdf: 'text-[#ff8f86]', docx: 'text-[#8fb2ff]',
+      xlsx: 'text-[#6fdca0]', pptx: 'text-[#ffa07f]', vsdx: 'text-[#a4b6f0]', image: 'text-navy-good', file: 'text-navy-ink-3',
+    };
+    return <span className={`${box} ${bareTone[toneKey]}`}><Icon className={GLYPH_SIZE[size]} /></span>;
+  }
+  return <span className={`${box} ${tone[toneKey]}`}><Icon className={GLYPH_SIZE[size]} /></span>;
 }
 
 export function relativeTime(iso: string) {

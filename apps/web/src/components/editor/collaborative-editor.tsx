@@ -3,7 +3,6 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Image from '@tiptap/extension-image';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { TableKit } from '@tiptap/extension-table';
@@ -13,8 +12,9 @@ import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { api, collabUrl } from '@/lib/api';
-import { lowlight } from '@/lib/code-detect';
 import { AutoCodeDetect } from './extensions/auto-code';
+import { Callout } from './extensions/callout';
+import { CodeBlock } from './extensions/code-block';
 import { Embed } from './extensions/embed';
 import { SlashCommand } from './extensions/slash-command';
 import { WebClipper, type WebClipperStorage } from './extensions/web-clipper';
@@ -28,6 +28,14 @@ function colorFor(id: string) {
 }
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+export interface Peer {
+  name: string;
+  color: string;
+}
+export interface OutlineItem {
+  level: number;
+  text: string;
+}
 
 interface Props {
   documentId: string;
@@ -36,6 +44,10 @@ interface Props {
   /** Imported HTML to load into the page the first time it is opened (while the doc is still empty). */
   initialHtml?: string | null;
   onStatusChange?: (status: ConnectionStatus, peers: number) => void;
+  /** Everyone currently in the document (from Yjs awareness). */
+  onPeers?: (peers: Peer[]) => void;
+  /** Headings, in order — for the "On this page" outline. */
+  onOutline?: (items: OutlineItem[]) => void;
 }
 
 async function uploadAttachment(documentId: string, file: File) {
@@ -50,7 +62,7 @@ async function uploadAttachment(documentId: string, file: File) {
  * Block editor bound to a Yjs document synced through Hocuspocus. Every keystroke is a CRDT
  * update, so concurrent edits merge without conflicts; the server persists the doc state.
  */
-export function CollaborativeEditor({ documentId, user, editable, initialHtml, onStatusChange }: Props) {
+export function CollaborativeEditor({ documentId, user, editable, initialHtml, onStatusChange, onPeers, onOutline }: Props) {
   const ydoc = useMemo(() => new Y.Doc(), [documentId]);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
   const [synced, setSynced] = useState(false);
@@ -64,7 +76,14 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
       // Fetched fresh on every (re)connect, so expired tokens never strand a session.
       token: async () => (await api<{ token: string }>('/auth/collab-token')).token,
       onStatus: ({ status }) => onStatusChange?.(status as ConnectionStatus, p.awareness?.getStates().size ?? 1),
-      onAwarenessChange: ({ states }) => onStatusChange?.('connected', states.length),
+      onAwarenessChange: ({ states }) => {
+        onStatusChange?.('connected', states.length);
+        onPeers?.(
+          states
+            .map((s) => (s as { user?: Peer }).user)
+            .filter((u): u is Peer => !!u?.name),
+        );
+      },
       onSynced: () => setSynced(true),
     });
     setProvider(p);
@@ -91,9 +110,21 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
           codeBlock: false,
           link: { openOnClick: false, autolink: true, defaultProtocol: 'https' },
         }),
-        CodeBlockLowlight.configure({ lowlight, defaultLanguage: null }),
+        CodeBlock,
+        Callout,
         Image.configure({ inline: false, allowBase64: false }),
-        TaskList,
+        // variant="steps" renders a numbered procedure (runbooks) instead of a plain checklist.
+        TaskList.extend({
+          addAttributes() {
+            return {
+              variant: {
+                default: null,
+                parseHTML: (el) => el.getAttribute('data-variant'),
+                renderHTML: (attrs) => (attrs.variant ? { 'data-variant': attrs.variant } : {}),
+              },
+            };
+          },
+        }),
         TaskItem.configure({ nested: true }),
         TableKit.configure({ table: { resizable: true } }),
         SlashCommand.configure({ uploadImage: (file) => uploadAttachment(documentId, file) }),
@@ -120,6 +151,22 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
   useEffect(() => {
     editor?.setEditable(editable);
   }, [editor, editable]);
+
+  useEffect(() => {
+    if (!editor || !onOutline) return;
+    const emit = () => {
+      const items: OutlineItem[] = [];
+      editor.state.doc.forEach((node) => {
+        if (node.type.name === 'heading' && node.textContent.trim()) items.push({ level: node.attrs.level, text: node.textContent.trim() });
+      });
+      onOutline(items);
+    };
+    emit();
+    editor.on('update', emit);
+    return () => {
+      editor.off('update', emit);
+    };
+  }, [editor, onOutline]);
 
   // Materialise an import once the server state has arrived and turned out to be empty.
   useEffect(() => {

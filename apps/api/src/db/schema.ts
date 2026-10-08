@@ -32,9 +32,11 @@ const timestamps = {
 
 export const authProvider = pgEnum('auth_provider', ['local', 'entra', 'ldap']);
 export const groupSource = pgEnum('group_source', ['local', 'entra', 'ldap']);
-export const systemRole = pgEnum('system_role', ['admin', 'member', 'guest']);
+export const systemRole = pgEnum('system_role', ['admin', 'editor', 'viewer']);
 export const permissionLevel = pgEnum('permission_level', ['view', 'comment', 'edit', 'manage']);
 export const documentKind = pgEnum('document_kind', ['folder', 'page', 'file']);
+export const pageType = pgEnum('page_type', ['page', 'runbook', 'kb']);
+export const docStatus = pgEnum('doc_status', ['none', 'draft', 'verified']);
 export const resourceType = pgEnum('resource_type', ['space', 'document']);
 export const subjectType = pgEnum('subject_type', ['user', 'group', 'everyone']);
 
@@ -51,7 +53,7 @@ export const users = pgTable(
     avatarUrl: text('avatar_url'),
     jobTitle: text('job_title'),
     department: text('department'),
-    role: systemRole('role').notNull().default('member'),
+    role: systemRole('role').notNull().default('editor'),
     /** False when the directory reports the account as disabled/removed. */
     active: boolean('active').notNull().default(true),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
@@ -170,6 +172,16 @@ export const documents = pgTable(
     mimeType: text('mime_type'),
     sizeBytes: integer('size_bytes'),
     storageKey: text('storage_key'),
+    pageType: pageType('page_type').notNull().default('page'),
+    /** Review workflow: draft → verified; becomes "stale" once verifiedAt + reviewIntervalDays passes. */
+    status: docStatus('status').notNull().default('none'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    verifiedById: uuid('verified_by_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Null = workspace default (180 days). */
+    reviewIntervalDays: integer('review_interval_days'),
+    ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Product / version tags, e.g. "ESXi 8", "Windows Server 2022". */
+    tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
     /** Sanitised HTML from a Markdown/HTML import; seeds the Yjs doc on first open, then cleared. */
     importHtml: text('import_html'),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),

@@ -86,7 +86,7 @@ export class IdentityService {
         const [{ total }] = await tx.select({ total: count() }).from(users);
         [user] = await tx
           .insert(users)
-          .values({ email: identity.email, role: total === 0 ? 'admin' : 'member', ...profileFields })
+          .values({ email: identity.email, role: total === 0 ? 'admin' : 'editor', ...profileFields })
           .returning();
       }
 
@@ -107,7 +107,7 @@ export class IdentityService {
       const [{ total }] = await tx.select({ total: count() }).from(users);
       const [user] = await tx
         .insert(users)
-        .values({ email, displayName, role: total === 0 ? 'admin' : 'member' })
+        .values({ email, displayName, role: total === 0 ? 'admin' : 'editor' })
         .returning();
       await tx.insert(accounts).values({
         userId: user.id,

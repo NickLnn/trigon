@@ -12,7 +12,12 @@ import { useAdminMutation, useAdminUsers } from '@/lib/admin-queries';
 import { useSession } from '@/lib/session';
 
 const PROVIDER_LABEL = { local: 'Email', entra: 'Microsoft', ldap: 'Domain' } as const;
-const ROLES: SystemRole[] = ['admin', 'member', 'guest'];
+const ROLES: SystemRole[] = ['admin', 'editor', 'viewer'];
+const ROLE_HINT: Record<SystemRole, string> = {
+  admin: 'Everything, including Settings, users and every space.',
+  editor: 'Creates spaces and edits wherever they have been given edit access.',
+  viewer: 'Read-only everywhere, whatever a space grants them.',
+};
 
 function AddUserSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const create = useAdminMutation((body: Record<string, string>) => api('/admin/users', { method: 'POST', json: body }));
@@ -34,10 +39,10 @@ function AddUserSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v:
           <TextInput name="password" type="password" required minLength={10} autoComplete="new-password" />
         </Field>
         <Field label="Role">
-          <select name="role" defaultValue="member" className="w-full rounded-xl bg-surface-2 px-3.5 py-2.5 outline-none ring-accent focus:ring-2">
-            <option value="member">Member</option>
-            <option value="admin">Admin</option>
-            <option value="guest">Guest</option>
+          <select name="role" defaultValue="editor" className="w-full rounded-xl bg-surface-2 px-3.5 py-2.5 outline-none ring-accent focus:ring-2">
+            <option value="editor">Editor — create and edit content</option>
+            <option value="viewer">Viewer — read-only</option>
+            <option value="admin">Admin — full control</option>
           </select>
         </Field>
         {create.error && <Result result={{ ok: false, message: create.error.message }} />}
@@ -68,7 +73,7 @@ function UserSheet({ user, onClose }: { user: AdminUser; onClose: () => void }) 
           {user.lastLoginAt && <Badge>Last seen {relativeTime(user.lastLoginAt)}</Badge>}
         </div>
 
-        <Field label="Role">
+        <Field label="Role" hint={ROLE_HINT[role]}>
           <div className="flex gap-1 rounded-pill bg-surface-2 p-1">
             {ROLES.map((r) => (
               <button
@@ -154,7 +159,7 @@ export default function UsersSettingsPage() {
                 <Badge key={p}>{PROVIDER_LABEL[p]}</Badge>
               ))}
             </span>
-            {u.role !== 'member' && <Badge tone={u.role === 'admin' ? 'accent' : 'neutral'}>{u.role}</Badge>}
+            <Badge tone={u.role === 'admin' ? 'accent' : u.role === 'viewer' ? 'neutral' : 'success'}>{u.role}</Badge>
             {!u.active && <Badge tone="danger">inactive</Badge>}
           </button>
         ))}

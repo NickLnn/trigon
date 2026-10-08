@@ -1,10 +1,11 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import type { DocumentNode, SpaceSummary } from '@trigon/shared';
+import type { DocumentNode, SpaceStats, SpaceSummary } from '@trigon/shared';
 import { IsHexColor, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
-import { CurrentUser, type AuthUser } from '../common/decorators';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { documents, spaces } from '../db/schema';
+import { displayStatus } from '../documents/documents.controller';
 import { PermissionsService } from '../permissions/permissions.service';
 
 class CreateSpaceDto {
@@ -102,6 +103,7 @@ export class SpacesController {
   }
 
   @Post()
+  @Roles('admin', 'editor')
   async create(@CurrentUser() user: AuthUser, @Body() dto: CreateSpaceDto) {
     const base = slugify(dto.name);
     const existing = await this.db.select({ slug: spaces.slug }).from(spaces).where(eq(spaces.slug, base));
@@ -142,6 +144,21 @@ export class SpacesController {
     return { ok: true };
   }
 
+  /** Header numbers for a space: documents, verified, stale. */
+  @Get(':id/stats')
+  async stats(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<SpaceStats> {
+    await this.perms.assertSpace(user, id, 'view');
+    const [row] = await this.db
+      .select({
+        docs: sql<number>`count(*) filter (where ${documents.kind} <> 'folder')::int`,
+        verified: sql<number>`count(*) filter (where ${displayStatus} = 'verified')::int`,
+        stale: sql<number>`count(*) filter (where ${displayStatus} = 'stale')::int`,
+      })
+      .from(documents)
+      .where(and(eq(documents.spaceId, id), isNull(documents.deletedAt)));
+    return row;
+  }
+
   /** The full navigation tree (folders, pages, files) of a space. */
   @Get(':id/tree')
   async tree(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<DocumentNode[]> {
@@ -156,6 +173,8 @@ export class SpacesController {
         icon: documents.icon,
         position: documents.position,
         mimeType: documents.mimeType,
+        pageType: documents.pageType,
+        status: displayStatus,
         updatedAt: documents.updatedAt,
       })
       .from(documents)
