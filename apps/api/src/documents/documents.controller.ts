@@ -217,41 +217,50 @@ export class DocumentsController {
     return doc;
   }
 
-  /** Search across everything the user can see (Postgres full-text over title + body text). */
+  /**
+   * Search-as-you-type across everything the user can see: every word is matched as a prefix
+   * ("sign ou" finds "Sign out…") over title + body, title hits rank first, and an ILIKE fallback
+   * catches partial words inside titles.
+   */
   @Get('search')
   async search(@CurrentUser() user: AuthUser, @Query('q') q = '') {
-    const term = q.trim();
-    if (term.length < 2) return [];
+    const term = q.trim().slice(0, 200);
+    const words = (term.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).slice(0, 8);
+    if (!words.length) return [];
     const levels = await this.perms.spaceLevels(user);
     const spaceIds = user.role === 'admin' ? null : [...levels.keys()];
     if (spaceIds && !spaceIds.length) return [];
 
     const tsv = sql`to_tsvector('simple', coalesce(${documents.title}, '') || ' ' || coalesce(${documents.textContent}, ''))`;
-    const query = sql`websearch_to_tsquery('simple', ${term})`;
-    const rows = await this.db
+    const query = sql`to_tsquery('simple', ${words.map((w) => `${w}:*`).join(' & ')})`;
+    const titleHit = sql`(${documents.title} ILIKE ${'%' + term + '%'})`;
+    const rank = sql<number>`(ts_rank(${tsv}, ${query}) + CASE WHEN ${titleHit} THEN 1 ELSE 0 END)`;
+    return this.db
       .select({
         id: documents.id,
         title: documents.title,
         kind: documents.kind,
         icon: documents.icon,
+        mimeType: documents.mimeType,
+        pageType: documents.pageType,
+        status: displayStatus,
         spaceId: documents.spaceId,
         spaceName: spaces.name,
         updatedAt: documents.updatedAt,
         snippet: sql<string>`ts_headline('simple', coalesce(${documents.textContent}, ''), ${query}, 'MaxFragments=1,MaxWords=24,MinWords=8,StartSel=<mark>,StopSel=</mark>')`,
-        rank: sql<number>`ts_rank(${tsv}, ${query})`,
       })
       .from(documents)
       .innerJoin(spaces, eq(spaces.id, documents.spaceId))
       .where(
         and(
           isNull(documents.deletedAt),
-          sql`(${tsv} @@ ${query} OR ${documents.title} ILIKE ${'%' + term + '%'})`,
+          sql`(${tsv} @@ ${query} OR ${titleHit})`,
           spaceIds ? sql`${documents.spaceId} = ANY(${spaceIds}::uuid[])` : undefined,
         ),
       )
-      .orderBy(desc(sql`rank`), desc(documents.updatedAt))
-      .limit(30);
-    return rows;
+      // Order by the expression itself — a SELECT alias isn't visible here (that was the old bug).
+      .orderBy(desc(rank), desc(documents.updatedAt))
+      .limit(20);
   }
 
   /** Recently updated documents for the home screen. */

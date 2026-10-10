@@ -25,6 +25,9 @@ export interface SearchHit {
   title: string;
   kind: DocumentKind;
   icon: string | null;
+  mimeType: string | null;
+  pageType: PageType;
+  status: DisplayStatus;
   spaceId: string;
   spaceName: string;
   snippet: string;

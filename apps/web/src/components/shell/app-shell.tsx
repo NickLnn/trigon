@@ -32,6 +32,18 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (!loading && !user) router.replace(`/login?returnTo=${encodeURIComponent(pathname)}`);
   }, [loading, user, router, pathname]);
 
+  // Ctrl/⌘+K opens search from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        router.push('/search');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [router]);
+
   if (loading || !user || isDesktop === undefined) return <Splash />;
 
   if (isDesktop) {

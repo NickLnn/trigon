@@ -8,8 +8,7 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
-    "useDefineForClassFields": false,
-    "incremental": true
+    "useDefineForClassFields": false
   },
   "include": ["src"],
   "exclude": ["src/**/*.spec.ts"]
