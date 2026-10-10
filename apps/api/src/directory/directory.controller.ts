@@ -12,15 +12,16 @@ export class DirectoryController {
     return this.sync.status();
   }
 
+  /** Starts a sync in the background; poll GET /directory/status for progress and the result. */
   @Post('sync/entra')
-  @HttpCode(200)
+  @HttpCode(202)
   syncEntra() {
-    return this.sync.syncEntra();
+    return this.sync.start('entra');
   }
 
   @Post('sync/ldap')
-  @HttpCode(200)
+  @HttpCode(202)
   syncLdap() {
-    return this.sync.syncLdap();
+    return this.sync.start('ldap');
   }
 }

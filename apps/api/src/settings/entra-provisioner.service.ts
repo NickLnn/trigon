@@ -192,6 +192,10 @@ export class EntraProvisionerService {
         clientId: app.appId,
         clientSecret: secret.secretText,
         provisionedAppId: app.appId,
+        // Nothing is imported until the admin picks which groups / users get access.
+        syncScope: 'selected',
+        syncGroups: [],
+        syncUsers: [],
       },
       userId,
     );
