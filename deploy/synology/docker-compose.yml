@@ -1,0 +1,76 @@
+# Trigon for Synology Container Manager (Project).
+#
+# Uses the prebuilt images GitHub Actions publishes to ghcr.io, so the NAS never builds anything.
+# Put this file and a .env next to each other in e.g. /volume1/docker/trigon-app and create a
+# Container Manager project on that folder — see deploy/synology/README.md.
+#
+# Image channel: TRIGON_TAG=latest (main branch, stable) or TRIGON_TAG=dev (dev branch, newest).
+name: trigon
+
+services:
+  postgres:
+    container_name: trigon-postgres
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trigon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-trigon}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      - '${POSTGRES_PORT:-15432}:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    container_name: trigon-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    container_name: trigon-api
+    image: ghcr.io/nicklnn/trigon-api:${TRIGON_TAG:-latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Discrete PG* vars instead of a URL, so the password needs no URL-escaping.
+      DATABASE_URL: ''
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-trigon}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-trigon}
+      REDIS_URL: redis://redis:6379
+      API_PORT: 4000
+      COLLAB_PORT: 4001
+      STORAGE_DIR: /data/storage
+    volumes:
+      - ./data/storage:/data/storage
+    ports:
+      - '${COLLAB_PORT:-4001}:4001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    container_name: trigon-web
+    image: ghcr.io/nicklnn/trigon-web:${TRIGON_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - '${WEB_PORT:-8797}:3000'
+    depends_on:
+      - api
