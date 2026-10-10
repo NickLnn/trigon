@@ -1,6 +1,7 @@
 'use client';
 
-import { ChevronRight, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
+import { ChevronRight, Download, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
+import { OPEN_INSTALL_EVENT } from '@/components/ui/install-prompt';
 import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { PageHeader } from '@/components/shell/page-header';
@@ -82,6 +83,10 @@ export default function ProfilePage() {
             <Row icon={<Settings className="size-4" />} label="Settings" value="Entra, LDAP, users, groups" onClick={() => router.push('/settings')} />
           </Group>
         )}
+
+        <Group title="App">
+          <Row icon={<Download className="size-4" />} label="Install Trigon on this device" onClick={() => window.dispatchEvent(new Event(OPEN_INSTALL_EVENT))} />
+        </Group>
 
         <Group title="Account">
           <Row icon={<LogOut className="size-4" />} label="Sign out" onClick={signOut} />
