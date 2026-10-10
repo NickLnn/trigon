@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AdminGroup, AdminUser, AllSettings, EntraProvisionStatus, EntraSettings, GeneralSettings, LdapSettings } from '@trigon/shared';
+import type { AdminGroup, AdminUser, AllSettings, DirectoryPick, EntraProvisionStatus, EntraSettings, GeneralSettings, LdapSettings, SyncSourceStatus } from '@trigon/shared';
 import { api } from './api';
 
 export const useSettings = () => useQuery({ queryKey: ['settings'], queryFn: () => api<AllSettings>('/settings') });
@@ -26,17 +26,23 @@ export const useTestConnection = (section: 'entra' | 'ldap') =>
   });
 
 export interface DirectoryStatus {
-  entra: { enabled: boolean; running: boolean; lastGroupSync: string | null; accounts: number };
-  ldap: { enabled: boolean; running: boolean; lastGroupSync: string | null; accounts: number };
+  entra: SyncSourceStatus;
+  ldap: SyncSourceStatus;
 }
 
+/** Polls fast while a sync is running, slowly otherwise. */
 export const useDirectoryStatus = () =>
-  useQuery({ queryKey: ['directory-status'], queryFn: () => api<DirectoryStatus>('/directory/status'), refetchInterval: 15_000 });
+  useQuery({
+    queryKey: ['directory-status'],
+    queryFn: () => api<DirectoryStatus>('/directory/status'),
+    refetchInterval: (q) => (q.state.data?.entra.running || q.state.data?.ldap.running ? 1500 : 15_000),
+  });
 
+/** Starts a background sync; progress and the result come from useDirectoryStatus. */
 export function useSyncNow(source: 'entra' | 'ldap') {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<{ users: number; groups: number; memberships: number; durationMs: number }>(`/directory/sync/${source}`, { method: 'POST' }),
+    mutationFn: () => api<{ started: boolean }>(`/directory/sync/${source}`, { method: 'POST' }),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['directory-status'] });
       qc.invalidateQueries({ queryKey: ['admin-users'] });
@@ -44,6 +50,24 @@ export function useSyncNow(source: 'entra' | 'ldap') {
     },
   });
 }
+
+export function useSaveEntraScope() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (scope: { syncScope: 'all' | 'selected'; syncGroups: DirectoryPick[]; syncUsers: DirectoryPick[] }) =>
+      api('/settings/entra/scope', { method: 'PUT', json: scope }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  });
+}
+
+export const useEntraDirectorySearch = (type: 'group' | 'user', q: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ['entra-directory', type, q],
+    queryFn: () => api<DirectoryPick[]>(`/settings/entra/directory?type=${type}&q=${encodeURIComponent(q)}`),
+    enabled,
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+  });
 
 export const useProvisionStatus = (poll: boolean) =>
   useQuery({

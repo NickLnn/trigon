@@ -1,10 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import type { GroupSource } from '@trigon/shared';
+import type { GroupSource, SyncResult, SyncSourceStatus } from '@trigon/shared';
 import { CronJob } from 'cron';
-import { and, count, eq, inArray, max, notInArray } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, max, ne, notInArray, sql } from 'drizzle-orm';
 import { Database, InjectDb } from '../db/db.module';
-import { accounts, groupMembers, groups } from '../db/schema';
+import { accounts, groupMembers, groups, refreshTokens, users } from '../db/schema';
 import { SettingsService } from '../settings/settings.service';
 import { IdentityService } from '../users/identity.service';
 import { EntraClientService } from './entra-client.service';
@@ -23,29 +23,28 @@ interface GraphGroup {
   id: string;
   displayName: string;
   description: string | null;
-  securityEnabled: boolean;
 }
-interface GraphMember {
+interface GraphMember extends Partial<GraphUser> {
   '@odata.type': string;
   id: string;
 }
 
-export interface SyncResult {
-  source: GroupSource;
-  users: number;
-  groups: number;
-  memberships: number;
-  durationMs: number;
-}
+const USER_SELECT = 'id,displayName,mail,userPrincipalName,jobTitle,department,accountEnabled';
+type Source = 'entra' | 'ldap';
 
 /**
  * Pulls users, groups and memberships from Entra ID (Graph) and LDAP into Trigon's tables.
  * Synced groups are what RBAC grants point at, so access follows the directory automatically.
+ *
+ * Entra supports a scope: the whole tenant, or only chosen groups (with nested members) plus chosen
+ * users. People who fall out of scope are deactivated (never deleted, and never admins).
+ * Syncs run in the background; status() reports progress and the last result.
  */
 @Injectable()
 export class DirectorySyncService implements OnModuleInit {
   private readonly logger = new Logger(DirectorySyncService.name);
-  private running = new Set<GroupSource>();
+  private running = new Map<Source, Date>();
+  private last = new Map<Source, { result: (SyncResult & { finishedAt: string }) | null; error: string | null }>();
 
   constructor(
     @InjectDb() private readonly db: Database,
@@ -65,32 +64,39 @@ export class DirectorySyncService implements OnModuleInit {
   }
 
   /** (Re)create the cron job for a source from its current settings. */
-  private async reschedule(source: 'entra' | 'ldap') {
+  private async reschedule(source: Source) {
     const name = `directory-sync-${source}`;
     if (this.scheduler.doesExist('cron', name)) this.scheduler.deleteCronJob(name);
     const enabled = source === 'entra' ? await this.entra.enabled() : await this.ldap.enabled();
     const { syncCron } = await this.settings.get(source);
-    this.schedule(source, enabled, syncCron, () => (source === 'entra' ? this.syncEntra() : this.syncLdap()));
-  }
-
-  private schedule(name: string, enabled: boolean, cron: string | undefined, fn: () => Promise<unknown>) {
-    if (!enabled || !cron) return;
-    const job = CronJob.from({
-      cronTime: cron,
-      onTick: async () => {
-        await fn().catch((err: Error) => this.logger.error(`${name} sync failed: ${err.message}`));
-      },
-    });
-    this.scheduler.addCronJob(`directory-sync-${name}`, job);
+    if (!enabled || !syncCron) return;
+    const job = CronJob.from({ cronTime: syncCron, onTick: () => void this.run(source).catch(() => undefined) });
+    this.scheduler.addCronJob(name, job);
     job.start();
-    this.logger.log(`Scheduled ${name} directory sync: ${cron}`);
+    this.logger.log(`Scheduled ${source} directory sync: ${syncCron}`);
   }
 
-  private async guard<T>(source: GroupSource, fn: () => Promise<T>): Promise<T> {
-    if (this.running.has(source)) throw new Error(`${source} sync already running`);
-    this.running.add(source);
+  /** Start a sync in the background and return immediately (the UI polls status()). */
+  start(source: Source): { started: boolean } {
+    if (this.running.has(source)) throw new ConflictException(`A ${source === 'entra' ? 'Microsoft' : 'LDAP'} sync is already running`);
+    void this.run(source).catch(() => undefined);
+    return { started: true };
+  }
+
+  /** Run a sync to completion (cron, tests). Records the outcome for status(). */
+  async run(source: Source): Promise<SyncResult> {
+    if (this.running.has(source)) throw new ConflictException(`${source} sync already running`);
+    this.running.set(source, new Date());
     try {
-      return await fn();
+      const result = source === 'entra' ? await this.syncEntra() : await this.syncLdap();
+      this.last.set(source, { result: { ...result, finishedAt: new Date().toISOString() }, error: null });
+      this.logger.log(`${source} sync: ${JSON.stringify(result)}`);
+      return result;
+    } catch (err) {
+      const message = (err as Error).message;
+      this.last.set(source, { result: this.last.get(source)?.result ?? null, error: message });
+      this.logger.error(`${source} sync failed: ${message}`);
+      throw err;
     } finally {
       this.running.delete(source);
     }
@@ -113,11 +119,7 @@ export class DirectorySyncService implements OnModuleInit {
     await this.db.transaction(async (tx) => {
       await tx
         .delete(groupMembers)
-        .where(
-          userIds.length
-            ? and(eq(groupMembers.groupId, groupId), notInArray(groupMembers.userId, userIds))
-            : eq(groupMembers.groupId, groupId),
-        );
+        .where(userIds.length ? and(eq(groupMembers.groupId, groupId), notInArray(groupMembers.userId, userIds)) : eq(groupMembers.groupId, groupId));
       if (userIds.length) {
         await tx
           .insert(groupMembers)
@@ -127,89 +129,137 @@ export class DirectorySyncService implements OnModuleInit {
     });
   }
 
-  /** Remove groups of this source that no longer exist in the directory. */
+  /** Remove groups of this source that are no longer in the directory / in scope. */
   private async pruneGroups(source: GroupSource, keepExternalIds: string[]) {
-    if (!keepExternalIds.length) return;
-    await this.db.delete(groups).where(and(eq(groups.source, source), notInArray(groups.externalId, keepExternalIds)));
+    await this.db
+      .delete(groups)
+      .where(keepExternalIds.length ? and(eq(groups.source, source), notInArray(groups.externalId, keepExternalIds)) : eq(groups.source, source));
   }
 
-  async syncEntra(): Promise<SyncResult> {
-    return this.guard('entra', async () => {
-      const started = Date.now();
-      const graphUsers = await this.entra.graphList<GraphUser>(
-        '/users?$select=id,displayName,mail,userPrincipalName,jobTitle,department,accountEnabled&$top=999',
+  /**
+   * Deactivate people whose only way in was this directory and who are no longer synced.
+   * Admins and anyone with a local or other-directory login are left alone. Returns how many.
+   */
+  private async deactivateOutOfScope(provider: Source, keepAccountIds: string[]): Promise<number> {
+    const stale = await this.db
+      .select({ userId: accounts.userId })
+      .from(accounts)
+      .innerJoin(users, eq(users.id, accounts.userId))
+      .where(
+        and(
+          eq(accounts.provider, provider),
+          keepAccountIds.length ? notInArray(accounts.providerAccountId, keepAccountIds) : undefined,
+          eq(users.active, true),
+          ne(users.role, 'admin'),
+          sql`not exists (select 1 from ${accounts} a2 where a2.user_id = ${accounts.userId} and a2.provider <> ${provider})`,
+        ),
       );
-      const byExternal = new Map<string, string>();
-      for (const gu of graphUsers) {
-        const user = await this.identity.upsertExternal({
-          provider: 'entra',
-          providerAccountId: gu.id,
-          email: gu.mail ?? gu.userPrincipalName,
-          displayName: gu.displayName ?? gu.userPrincipalName,
-          jobTitle: gu.jobTitle,
-          department: gu.department,
-          active: gu.accountEnabled,
-          profile: { ...gu },
-        });
-        byExternal.set(gu.id, user.id);
-      }
+    const ids = [...new Set(stale.map((s) => s.userId))];
+    if (!ids.length) return 0;
+    await this.db.update(users).set({ active: false }).where(inArray(users.id, ids));
+    await this.db.update(refreshTokens).set({ revokedAt: new Date() }).where(and(inArray(refreshTokens.userId, ids), isNull(refreshTokens.revokedAt)));
+    await this.db.delete(groupMembers).where(inArray(groupMembers.userId, ids));
+    return ids.length;
+  }
 
-      const graphGroups = await this.entra.graphList<GraphGroup>(
-        '/groups?$select=id,displayName,description,securityEnabled&$top=999',
-      );
-      let memberships = 0;
+  private async upsertGraphUser(gu: GraphUser) {
+    const user = await this.identity.upsertExternal({
+      provider: 'entra',
+      providerAccountId: gu.id,
+      email: gu.mail ?? gu.userPrincipalName,
+      displayName: gu.displayName ?? gu.userPrincipalName,
+      jobTitle: gu.jobTitle,
+      department: gu.department,
+      active: gu.accountEnabled,
+      profile: { ...gu },
+    });
+    return user.id;
+  }
+
+  private async syncEntra(): Promise<SyncResult> {
+    const started = Date.now();
+    const cfg = await this.settings.get('entra');
+    const byExternal = new Map<string, string>(); // Graph user id → Trigon user id
+    let memberships = 0;
+    let groupCount = 0;
+    let keepGroups: string[] = [];
+
+    if (cfg.syncScope === 'selected') {
+      // Chosen groups (with nested members) …
+      for (const pick of cfg.syncGroups) {
+        const gg = await this.entra.graphGet<GraphGroup>(`/groups/${pick.id}?$select=id,displayName,description`);
+        if (!gg) continue; // deleted in the tenant
+        const members = await this.entra.graphList<GraphMember>(`/groups/${gg.id}/transitiveMembers/microsoft.graph.user?$select=${USER_SELECT}&$top=999`);
+        const userIds: string[] = [];
+        for (const m of members) {
+          if (!m.userPrincipalName) continue;
+          if (!byExternal.has(m.id)) byExternal.set(m.id, await this.upsertGraphUser(m as GraphUser));
+          userIds.push(byExternal.get(m.id)!);
+        }
+        await this.setMembers(await this.upsertGroup('entra', gg.id, gg.displayName, gg.description), userIds);
+        memberships += userIds.length;
+        keepGroups.push(gg.id);
+        groupCount++;
+      }
+      // … plus individually chosen users.
+      for (const pick of cfg.syncUsers) {
+        if (byExternal.has(pick.id)) continue;
+        const gu = await this.entra.graphGet<GraphUser>(`/users/${pick.id}?$select=${USER_SELECT}`);
+        if (gu) byExternal.set(gu.id, await this.upsertGraphUser(gu));
+      }
+    } else {
+      for (const gu of await this.entra.graphList<GraphUser>(`/users?$select=${USER_SELECT}&$top=999`)) {
+        byExternal.set(gu.id, await this.upsertGraphUser(gu));
+      }
+      const graphGroups = await this.entra.graphList<GraphGroup>('/groups?$select=id,displayName,description&$top=999');
       for (const gg of graphGroups) {
-        const groupId = await this.upsertGroup('entra', gg.id, gg.displayName, gg.description);
         // transitiveMembers flattens nested groups so RBAC on a parent group covers its sub-groups
         const members = await this.entra.graphList<GraphMember>(`/groups/${gg.id}/transitiveMembers?$select=id&$top=999`);
         const userIds = members
           .filter((m) => m['@odata.type'] === '#microsoft.graph.user')
           .map((m) => byExternal.get(m.id))
           .filter((id): id is string => !!id);
-        await this.setMembers(groupId, userIds);
+        await this.setMembers(await this.upsertGroup('entra', gg.id, gg.displayName, gg.description), userIds);
         memberships += userIds.length;
       }
-      await this.pruneGroups('entra', graphGroups.map((g) => g.id));
+      keepGroups = graphGroups.map((g) => g.id);
+      groupCount = graphGroups.length;
+    }
 
-      const result = { source: 'entra' as const, users: graphUsers.length, groups: graphGroups.length, memberships, durationMs: Date.now() - started };
-      this.logger.log(`Entra sync: ${JSON.stringify(result)}`);
-      return result;
-    });
+    await this.pruneGroups('entra', keepGroups);
+    const deactivated = await this.deactivateOutOfScope('entra', [...byExternal.keys()]);
+    return { source: 'entra', users: byExternal.size, groups: groupCount, memberships, deactivated, durationMs: Date.now() - started };
   }
 
-  async syncLdap(): Promise<SyncResult> {
-    return this.guard('ldap', async () => {
-      const started = Date.now();
-      const ldapUsers = await this.ldap.listUsers();
-      const byDn = new Map<string, string>();
-      for (const lu of ldapUsers) {
-        const user = await this.identity.upsertExternal({
-          provider: 'ldap',
-          providerAccountId: lu.externalId,
-          email: lu.email,
-          displayName: lu.displayName,
-          jobTitle: lu.jobTitle,
-          department: lu.department,
-          active: !lu.disabled,
-          profile: { dn: lu.dn, username: lu.username },
-        });
-        byDn.set(lu.dn.toLowerCase(), user.id);
-      }
+  private async syncLdap(): Promise<SyncResult> {
+    const started = Date.now();
+    const ldapUsers = await this.ldap.listUsers();
+    const byDn = new Map<string, string>();
+    for (const lu of ldapUsers) {
+      const user = await this.identity.upsertExternal({
+        provider: 'ldap',
+        providerAccountId: lu.externalId,
+        email: lu.email,
+        displayName: lu.displayName,
+        jobTitle: lu.jobTitle,
+        department: lu.department,
+        active: !lu.disabled,
+        profile: { dn: lu.dn, username: lu.username },
+      });
+      byDn.set(lu.dn.toLowerCase(), user.id);
+    }
 
-      const ldapGroups = await this.ldap.listGroups();
-      let memberships = 0;
-      for (const lg of ldapGroups) {
-        const groupId = await this.upsertGroup('ldap', lg.dn, lg.name, lg.description);
-        const userIds = lg.members.map((dn) => byDn.get(dn.toLowerCase())).filter((id): id is string => !!id);
-        await this.setMembers(groupId, userIds);
-        memberships += userIds.length;
-      }
-      await this.pruneGroups('ldap', ldapGroups.map((g) => g.dn));
-
-      const result = { source: 'ldap' as const, users: ldapUsers.length, groups: ldapGroups.length, memberships, durationMs: Date.now() - started };
-      this.logger.log(`LDAP sync: ${JSON.stringify(result)}`);
-      return result;
-    });
+    const ldapGroups = await this.ldap.listGroups();
+    let memberships = 0;
+    for (const lg of ldapGroups) {
+      const groupId = await this.upsertGroup('ldap', lg.dn, lg.name, lg.description);
+      const userIds = lg.members.map((dn) => byDn.get(dn.toLowerCase())).filter((id): id is string => !!id);
+      await this.setMembers(groupId, userIds);
+      memberships += userIds.length;
+    }
+    if (ldapGroups.length) await this.pruneGroups('ldap', ldapGroups.map((g) => g.dn));
+    const deactivated = ldapUsers.length ? await this.deactivateOutOfScope('ldap', ldapUsers.map((u) => u.externalId)) : 0;
+    return { source: 'ldap', users: ldapUsers.length, groups: ldapGroups.length, memberships, deactivated, durationMs: Date.now() - started };
   }
 
   /** On LDAP login, refresh this user's group memberships from memberOf without a full sync. */
@@ -227,7 +277,7 @@ export class DirectorySyncService implements OnModuleInit {
     }
   }
 
-  async status() {
+  async status(): Promise<{ entra: SyncSourceStatus; ldap: SyncSourceStatus }> {
     const lastSync = await this.db
       .select({ source: groups.source, at: max(groups.lastSyncedAt) })
       .from(groups)
@@ -235,12 +285,17 @@ export class DirectorySyncService implements OnModuleInit {
     const linked = await this.db
       .select({ provider: accounts.provider, total: count() })
       .from(accounts)
+      .innerJoin(users, eq(users.id, accounts.userId))
+      .where(eq(users.active, true))
       .groupBy(accounts.provider);
     const [entraOn, ldapOn] = [await this.entra.enabled(), await this.ldap.enabled()];
-    const describe = (s: GroupSource, enabled: boolean) => ({
+    const describe = (s: Source, enabled: boolean): SyncSourceStatus => ({
       enabled,
       running: this.running.has(s),
-      lastGroupSync: lastSync.find((r) => r.source === s)?.at ?? null,
+      startedAt: this.running.get(s)?.toISOString() ?? null,
+      lastResult: this.last.get(s)?.result ?? null,
+      lastError: this.last.get(s)?.error ?? null,
+      lastGroupSync: lastSync.find((r) => r.source === s)?.at?.toISOString() ?? null,
       accounts: linked.find((r) => r.provider === s)?.total ?? 0,
     });
     return { entra: describe('entra', entraOn), ldap: describe('ldap', ldapOn) };

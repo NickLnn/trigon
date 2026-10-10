@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { EntraClientService } from '../directory/entra-client.service';
+import { SettingsService } from '../settings/settings.service';
 import { IdentityService } from '../users/identity.service';
 
 const SCOPES = ['openid', 'profile', 'email', 'User.Read'];
@@ -16,6 +17,7 @@ export class EntraAuthService {
   constructor(
     private readonly entra: EntraClientService,
     private readonly identity: IdentityService,
+    private readonly settings: SettingsService,
   ) {}
 
   enabled() {
@@ -48,6 +50,13 @@ export class EntraAuthService {
     const oid = String(claims.oid ?? result.uniqueId);
     const email = String(claims.email ?? claims.preferred_username ?? result.account?.username ?? '');
     if (!oid || !email) throw new BadRequestException('Entra token is missing oid/email claims');
+
+    // With a sync scope, only people the admin chose (and who have been synced) may sign in.
+    if ((await this.settings.get('entra')).syncScope === 'selected') {
+      const account = await this.identity.findAccount('entra', oid);
+      const session = account ? await this.identity.toSessionUser(account.userId) : null;
+      if (!session) throw new BadRequestException("Your Microsoft account hasn't been given access to Trigon yet. Ask an administrator.");
+    }
 
     return this.identity.upsertExternal({
       provider: 'entra',
