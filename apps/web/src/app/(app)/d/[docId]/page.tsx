@@ -1,12 +1,12 @@
 'use client';
 
 import { isTextFile } from '@trigon/shared';
-import { ArrowLeft, ChevronRight, Download, Info, PanelRightClose, PanelRightOpen, Share2, Smile } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, CloudOff, Download, Info, Loader2, PanelRightClose, PanelRightOpen, Share2, Smile } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ConnectionStatus, OutlineItem, Peer } from '@/components/editor/collaborative-editor';
+import type { ConnectionStatus, OutlineItem, Peer, SaveState } from '@/components/editor/collaborative-editor';
 import { DocDetails, VerifyButton } from '@/components/shell/doc-details';
 import { ShareSheet } from '@/components/shell/share-sheet';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
@@ -131,6 +131,28 @@ function Presence({ status, peers }: { status: ConnectionStatus; peers: Peer[] }
   );
 }
 
+/** "Saved" / "Saving…" / "Not saved — offline" next to the breadcrumb. */
+function SaveIndicator({ state, editable }: { state: SaveState; editable: boolean }) {
+  if (!editable) return null;
+  if (state === 'saved')
+    return (
+      <span className="hidden shrink-0 items-center gap-1 text-meta text-ink-3 sm:inline-flex">
+        <Check className="size-3.5" /> Saved
+      </span>
+    );
+  if (state === 'saving')
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 text-meta text-ink-3">
+        <Loader2 className="size-3.5 animate-spin" /> Saving…
+      </span>
+    );
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-danger/10 px-2 py-0.5 text-meta font-semibold text-danger" title="Your latest edits are only in this tab. Keep it open until it says Saved.">
+      <CloudOff className="size-3.5" /> Not saved — reconnecting
+    </span>
+  );
+}
+
 const RAIL_KEY = 'trigon.doc.rail';
 
 /** Desktop right rail (presence, outline, details) — open by default, remembered per device. */
@@ -184,6 +206,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [sheet, setSheet] = useState<'share' | 'details' | null>(null);
   const [railOpen, toggleRail] = useRail();
+  const [saveState, setSaveState] = useState<SaveState>('saving');
   const onStatus = useCallback((s: ConnectionStatus) => setConn(s), []);
 
   if (error) return <p className="p-10 text-center text-ink-2">{error.message}</p>;
@@ -297,8 +320,9 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
           <button onClick={() => router.back()} className="press grid size-9 shrink-0 place-items-center rounded-full hover:bg-surface-2 md:hidden" aria-label="Back">
             <ArrowLeft className="size-5" />
           </button>
-          <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <Breadcrumb doc={doc} />
+            <SaveIndicator state={saveState} editable={canEdit} />
           </div>
           {toolbar}
         </div>
@@ -327,6 +351,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
               onStatusChange={onStatus}
               onPeers={setPeers}
               onOutline={setOutline}
+              onSaveState={setSaveState}
             />
           </div>
         </div>

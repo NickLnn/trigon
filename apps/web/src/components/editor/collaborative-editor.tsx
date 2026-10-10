@@ -32,6 +32,8 @@ export interface Peer {
   name: string;
   color: string;
 }
+/** saved: server has every edit · saving: edits in flight · offline: edits only in this tab */
+export type SaveState = 'saved' | 'saving' | 'offline';
 export interface OutlineItem {
   level: number;
   text: string;
@@ -48,6 +50,7 @@ interface Props {
   onPeers?: (peers: Peer[]) => void;
   /** Headings, in order — for the "On this page" outline. */
   onOutline?: (items: OutlineItem[]) => void;
+  onSaveState?: (state: SaveState) => void;
 }
 
 async function uploadAttachment(documentId: string, file: File) {
@@ -62,20 +65,31 @@ async function uploadAttachment(documentId: string, file: File) {
  * Block editor bound to a Yjs document synced through Hocuspocus. Every keystroke is a CRDT
  * update, so concurrent edits merge without conflicts; the server persists the doc state.
  */
-export function CollaborativeEditor({ documentId, user, editable, initialHtml, onStatusChange, onPeers, onOutline }: Props) {
+export function CollaborativeEditor({ documentId, user, editable, initialHtml, onStatusChange, onPeers, onOutline, onSaveState }: Props) {
   const ydoc = useMemo(() => new Y.Doc(), [documentId]);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
   const [synced, setSynced] = useState(false);
   const seeded = useRef(false);
 
   useEffect(() => {
+    let connected = false;
+    let unsynced = 0;
+    const report = () => onSaveState?.(!connected ? (unsynced > 0 ? 'offline' : 'saving') : unsynced > 0 ? 'saving' : 'saved');
     const p = new HocuspocusProvider({
       url: collabUrl(),
       name: documentId,
       document: ydoc,
       // Fetched fresh on every (re)connect, so expired tokens never strand a session.
       token: async () => (await api<{ token: string }>('/auth/collab-token')).token,
-      onStatus: ({ status }) => onStatusChange?.(status as ConnectionStatus, p.awareness?.getStates().size ?? 1),
+      onStatus: ({ status }) => {
+        connected = status === 'connected';
+        report();
+        onStatusChange?.(status as ConnectionStatus, p.awareness?.getStates().size ?? 1);
+      },
+      onUnsyncedChanges: ({ number }) => {
+        unsynced = number;
+        report();
+      },
       onAwarenessChange: ({ states }) => {
         onStatusChange?.('connected', states.length);
         onPeers?.(
@@ -84,10 +98,24 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
             .filter((u): u is Peer => !!u?.name),
         );
       },
-      onSynced: () => setSynced(true),
+      onSynced: () => {
+        setSynced(true);
+        report();
+      },
     });
     setProvider(p);
+
+    // Closing/reloading the tab with edits the server hasn't confirmed would lose them — ask first.
+    const beforeUnload = (e: BeforeUnloadEvent) => {
+      p.flushPendingUpdates();
+      if (p.hasUnsyncedChanges) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', beforeUnload);
+      // Send any batched edits before the socket closes (in-app navigation).
+      p.flushPendingUpdates();
       p.destroy();
       setProvider(null);
       setSynced(false);
