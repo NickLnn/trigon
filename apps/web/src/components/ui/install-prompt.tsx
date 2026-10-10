@@ -10,21 +10,22 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
-const DISMISS_KEY = 'trigon.install.dismissedAt';
-const SNOOZE_DAYS = 14;
+/** Set the first time the offer is shown — it never opens by itself again on this device. */
+const SHOWN_KEY = 'trigon.install.offered';
+/** Fire this to open the sheet on demand (Profile → Install app). */
+export const OPEN_INSTALL_EVENT = 'trigon-open-install';
 
-function snoozed() {
+function alreadyOffered() {
   try {
-    const at = Number(localStorage.getItem(DISMISS_KEY) ?? 0);
-    return Date.now() - at < SNOOZE_DAYS * 86_400_000;
+    return localStorage.getItem(SHOWN_KEY) === '1';
   } catch {
-    return false;
+    return true; // no storage → don't nag on every visit
   }
 }
 
-function snooze() {
+function markOffered() {
   try {
-    localStorage.setItem(DISMISS_KEY, String(Date.now()));
+    localStorage.setItem(SHOWN_KEY, '1');
   } catch {
     /* storage unavailable */
   }
@@ -45,33 +46,33 @@ export function InstallPrompt() {
   const [ios, setIos] = useState(false);
 
   useEffect(() => {
-    if (standalone !== false || snoozed()) return;
+    if (standalone !== false) return;
+    setIos(isIos());
+    const auto = !alreadyOffered();
+    const show = () => {
+      markOffered();
+      setOpen(true);
+    };
+    let t: ReturnType<typeof setTimeout> | undefined;
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setDeferred(e as BeforeInstallPromptEvent);
-      setTimeout(() => setOpen(true), 4000);
+      if (auto) t = setTimeout(show, 8000);
     };
     window.addEventListener('beforeinstallprompt', onPrompt);
-    if (isIos()) {
-      setIos(true);
-      const t = setTimeout(() => setOpen(true), 6000);
-      return () => {
-        clearTimeout(t);
-        window.removeEventListener('beforeinstallprompt', onPrompt);
-      };
-    }
-    return () => window.removeEventListener('beforeinstallprompt', onPrompt);
+    if (isIos() && auto) t = setTimeout(show, 8000);
+    window.addEventListener(OPEN_INSTALL_EVENT, show);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener(OPEN_INSTALL_EVENT, show);
+    };
   }, [standalone]);
 
-  const close = (v: boolean) => {
-    setOpen(v);
-    if (!v) snooze();
-  };
-
-  if (standalone !== false || (!deferred && !ios)) return null;
+  if (standalone !== false) return null;
 
   return (
-    <BottomSheet open={open} onOpenChange={close} title="Install Trigon" description="Get the full-screen app with offline access — right from your home screen.">
+    <BottomSheet open={open} onOpenChange={setOpen} title="Install Trigon" description="Get the full-screen app with offline access — right from your home screen.">
       <div className="flex items-center gap-4 rounded-2xl bg-surface-2 p-4">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icons/icon-192.png" alt="" className="size-14 rounded-2xl shadow-card" />
@@ -80,7 +81,12 @@ export function InstallPrompt() {
           <p className="text-meta text-ink-3">Docs, spaces and search — offline-ready</p>
         </div>
       </div>
-      {ios && !deferred ? (
+      {!deferred && !ios ? (
+        <p className="mt-5 rounded-2xl bg-surface-2 p-4 text-sm text-ink-2">
+          Use your browser&apos;s menu → <b>Install app</b> (or <b>Add to Home Screen</b> on Android). If it isn&apos;t offered, Trigon needs to be opened over
+          <b> HTTPS</b> — browsers only allow installing secure sites.
+        </p>
+      ) : ios && !deferred ? (
         <ol className="mt-5 space-y-3">
           <li className="flex items-center gap-3">
             <span className="grid size-9 place-items-center rounded-full bg-accent-soft text-accent">
@@ -108,7 +114,7 @@ export function InstallPrompt() {
           <Download className="size-4" /> Install app
         </button>
       )}
-      <button className="mt-2 w-full py-3 text-ink-2" onClick={() => close(false)}>
+      <button className="mt-2 w-full py-3 text-ink-2" onClick={() => setOpen(false)}>
         Not now
       </button>
     </BottomSheet>
