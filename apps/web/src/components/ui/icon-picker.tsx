@@ -38,12 +38,12 @@ export function IconPicker({
     queryFn: () => api<IconCatalogEntry[]>('/icons/catalog'),
     enabled: open,
     // Poll while vendor icons are still being fetched in the background.
-    refetchInterval: (query) => (query.state.data?.some((c) => !c.iconId) ? 2500 : false),
+    refetchInterval: (query) => (query.state.data?.some((c) => !c.iconId && !c.failed) ? 2500 : false),
   });
   const custom = useQuery({ queryKey: ['icons'], queryFn: () => api<IconInfo[]>('/icons'), enabled: open });
 
   useEffect(() => {
-    if (open && catalog.data?.some((c) => !c.iconId) && !warmed.current) {
+    if (open && catalog.data?.some((c) => !c.iconId && !c.failed) && !warmed.current) {
       warmed.current = true;
       api('/icons/catalog/warm', { method: 'POST' }).catch(() => undefined);
     }
@@ -83,16 +83,22 @@ export function IconPicker({
   }, [catalog.data, term]);
   const customItems = (custom.data ?? []).filter((c) => !term || c.name.toLowerCase().includes(term) || c.domain?.includes(term));
 
-  const tile = (key: string, label: string, iconId: string | null, onClick: () => void, selected: boolean) => (
+  const tile = (key: string, label: string, iconId: string | null, onClick: () => void, selected: boolean, failed = false) => (
     <button
       key={key}
       onClick={onClick}
-      disabled={!iconId}
-      title={label}
+      disabled={!iconId && !failed}
+      title={failed ? `${label} — no logo found, click to try again` : label}
       className={`press flex flex-col items-center gap-1.5 rounded-2xl p-2 hover:bg-surface-2 disabled:cursor-wait ${selected ? 'bg-accent-soft ring-2 ring-accent' : ''}`}
     >
       <span className="grid size-11 place-items-center rounded-xl bg-white ring-1 ring-line">
-        {iconId ? <img src={`/api/icons/${iconId}`} alt="" className="size-7 object-contain" loading="lazy" /> : <Loader2 className="size-4 animate-spin text-ink-3" />}
+        {iconId ? (
+          <img src={`/api/icons/${iconId}`} alt="" className="size-7 object-contain" loading="lazy" />
+        ) : failed ? (
+          <span className="text-lg font-bold text-[#4a545d]">{label[0]}</span>
+        ) : (
+          <Loader2 className="size-4 animate-spin text-ink-3" />
+        )}
       </span>
       <span className="line-clamp-1 w-full text-center text-[0.6875rem] font-medium text-ink-2">{label}</span>
     </button>
@@ -142,7 +148,16 @@ export function IconPicker({
               <section key={category}>
                 <h3 className="mb-1.5 text-meta font-semibold uppercase tracking-wider text-ink-3">{category}</h3>
                 <div className="grid grid-cols-4 gap-1 sm:grid-cols-6">
-                  {items.map((c) => tile(c.domain, c.name, c.iconId, () => c.iconId && choose(`img:${c.iconId}`), current === `img:${c.iconId}`))}
+                  {items.map((c) =>
+                    tile(
+                      c.domain,
+                      c.name,
+                      c.iconId,
+                      () => (c.iconId ? choose(`img:${c.iconId}`) : fetchSite.mutate(c.domain)),
+                      current === `img:${c.iconId}`,
+                      c.failed,
+                    ),
+                  )}
                 </div>
               </section>
             ))}

@@ -59,6 +59,13 @@ export function iconCandidates(html: string, base: URL): Candidate[] {
 export class IconsService {
   private readonly logger = new Logger(IconsService.name);
   private inFlight = new Map<string, Promise<string>>();
+  /** Domains whose last fetch found nothing (so the picker stops waiting); retried after an hour. */
+  private failed = new Map<string, number>();
+
+  hasFailed(domain: string) {
+    const at = this.failed.get(domain);
+    return !!at && Date.now() - at < 3_600_000;
+  }
 
   constructor(
     @InjectDb() private readonly db: Database,
@@ -71,11 +78,20 @@ export class IconsService {
   }
 
   /** Returns the icon id for a domain, fetching it the first time. Concurrent calls share one fetch. */
-  fetchForDomain(input: string, name?: string, userId?: string): Promise<string> {
+  fetchForDomain(input: string, name?: string, userId?: string, iconUrl?: string): Promise<string> {
     const domain = normaliseDomain(input);
     const pending = this.inFlight.get(domain);
     if (pending) return pending;
-    const job = this.doFetch(domain, name ?? domain, userId).finally(() => this.inFlight.delete(domain));
+    const job = this.doFetch(domain, name ?? domain, userId, iconUrl)
+      .then((id) => {
+        this.failed.delete(domain);
+        return id;
+      })
+      .catch((err) => {
+        this.failed.set(domain, Date.now());
+        throw err;
+      })
+      .finally(() => this.inFlight.delete(domain));
     this.inFlight.set(domain, job);
     return job;
   }
@@ -97,16 +113,17 @@ export class IconsService {
     }
   }
 
-  private async doFetch(domain: string, name: string, userId?: string): Promise<string> {
+  private async doFetch(domain: string, name: string, userId?: string, iconUrl?: string): Promise<string> {
     const existing = await this.findByDomain(domain);
     if (existing) return existing.id;
 
-    const candidates: Candidate[] = [];
+    // A pinned official logo wins over whatever the website advertises.
+    const candidates: Candidate[] = iconUrl ? [{ url: iconUrl, score: 100_000 }] : [];
     for (const origin of [`https://${domain}`, `https://www.${domain}`]) {
       try {
         const page = await safeFetch(origin, { maxBytes: 1024 * 1024, timeoutMs: 8000, accept: 'text/html' });
         candidates.push(...iconCandidates(page.buffer.toString('utf8'), page.finalUrl));
-        if (candidates.length) break;
+        if (candidates.length > (iconUrl ? 1 : 0)) break;
       } catch {
         /* try the next origin */
       }

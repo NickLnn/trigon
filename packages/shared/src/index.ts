@@ -320,6 +320,8 @@ export interface IconCatalogEntry {
   category: string;
   /** Set once Trigon has fetched and stored the vendor's icon. */
   iconId: string | null;
+  /** The last attempt found no usable icon (the picker shows a placeholder instead of waiting). */
+  failed: boolean;
 }
 
 /** Icon column values: an emoji, or `img:<icon id>` for a stored image icon. */

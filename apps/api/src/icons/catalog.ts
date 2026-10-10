@@ -1,15 +1,22 @@
-/** Curated vendors offered in the icon picker. Icons are fetched from each vendor's own site on demand. */
-export const ICON_CATALOG: { name: string; domain: string; category: string }[] = [
+const COMMONS = 'https://commons.wikimedia.org/wiki/Special:FilePath/';
+const OFFICE_CDN = 'https://res-1.cdn.office.net/files/fabric-cdn-prod_20230815.002/assets/brand-icons/product/svg/';
+
+/**
+ * Curated vendors offered in the icon picker. Icons are fetched from each vendor's own site on demand;
+ * `iconUrl` pins an official logo for products whose site doesn't expose one (sign-in portals etc.).
+ */
+export const ICON_CATALOG: { name: string; domain: string; category: string; iconUrl?: string }[] = [
   // Microsoft
   { name: 'Microsoft', domain: 'microsoft.com', category: 'Microsoft' },
   { name: 'Azure', domain: 'azure.microsoft.com', category: 'Microsoft' },
   { name: 'Microsoft 365', domain: 'microsoft365.com', category: 'Microsoft' },
-  { name: 'Entra ID', domain: 'entra.microsoft.com', category: 'Microsoft' },
-  { name: 'Intune', domain: 'intune.microsoft.com', category: 'Microsoft' },
+  { name: 'Entra ID', domain: 'entra.microsoft.com', category: 'Microsoft', iconUrl: COMMONS + 'Microsoft_Entra_ID_color_icon.svg' },
+  { name: 'Intune', domain: 'intune.microsoft.com', category: 'Microsoft', iconUrl: COMMONS + 'Microsoft-intune.svg' },
   { name: 'Teams', domain: 'teams.microsoft.com', category: 'Microsoft' },
-  { name: 'SharePoint', domain: 'sharepoint.com', category: 'Microsoft' },
+  { name: 'SharePoint', domain: 'sharepoint.com', category: 'Microsoft', iconUrl: OFFICE_CDN + 'sharepoint_48x1.svg' },
+  { name: 'OneDrive', domain: 'onedrive.live.com', category: 'Microsoft', iconUrl: OFFICE_CDN + 'onedrive_48x1.svg' },
   { name: 'Outlook', domain: 'outlook.com', category: 'Microsoft' },
-  { name: 'Windows', domain: 'windows.com', category: 'Microsoft' },
+  { name: 'Windows', domain: 'windows.com', category: 'Microsoft', iconUrl: COMMONS + 'Windows_logo_-_2021.svg' },
   { name: 'Power BI', domain: 'powerbi.com', category: 'Microsoft' },
   // Virtualisation & OS
   { name: 'VMware', domain: 'vmware.com', category: 'Infrastructure' },
