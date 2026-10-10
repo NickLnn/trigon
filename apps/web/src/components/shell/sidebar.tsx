@@ -54,7 +54,7 @@ function SpaceSection({
         </div>
       </div>
       {open && (
-        <div className="ml-3 border-l border-navy-3 pb-1 pl-1.5">
+        <div className="pb-1">
           <SpaceTree spaceId={space.id} activeId={activeId} canEdit={canEdit} />
         </div>
       )}
