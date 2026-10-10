@@ -2,14 +2,16 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import type { EntraSettings } from '@trigon/shared';
-import { Check, Copy, ExternalLink, RefreshCw, Sparkles } from 'lucide-react';
+import { Check, Copy, ExternalLink, RefreshCw, Sparkles, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
+import { EntraScopeSheet } from '@/components/settings/entra-scope-sheet';
+import { SyncStatus } from '@/components/settings/sync-status';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
 import { useDirectoryStatus, useProvisionStatus, useSaveSettings, useSettings, useStartProvision, useSyncNow, useTestConnection } from '@/lib/admin-queries';
 
 /** "Connect to Microsoft": device-code sign-in, then Trigon creates and consents its own app registration. */
-function ConnectSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+function ConnectSheet({ open, onOpenChange, onNext }: { open: boolean; onOpenChange: (v: boolean) => void; onNext: () => void }) {
   const start = useStartProvision();
   const status = useProvisionStatus(open);
   const s = status.data;
@@ -76,7 +78,20 @@ function ConnectSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v:
         </ol>
       )}
 
-      {s?.state === 'done' && <div className="mt-5"><Result result={{ ok: true, message: s.message ?? 'Connected.' }} /></div>}
+      {s?.state === 'done' && (
+        <div className="mt-5 space-y-3">
+          <Result result={{ ok: true, message: s.message ?? 'Connected.' }} />
+          <Button
+            className="w-full"
+            onClick={() => {
+              onOpenChange(false);
+              onNext();
+            }}
+          >
+            <Users className="size-4" /> Next: choose who gets access
+          </Button>
+        </div>
+      )}
       {(s?.state === 'error' || start.error) && (
         <div className="mt-5 space-y-3">
           <Result result={{ ok: false, message: s?.message ?? start.error?.message ?? 'Something went wrong' }} />
@@ -98,6 +113,7 @@ export default function EntraSettingsPage() {
   const dir = useDirectoryStatus();
   const [form, setForm] = useState<EntraSettings | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [scopeOpen, setScopeOpen] = useState(false);
 
   useEffect(() => {
     if (data) setForm({ ...data.entra, clientSecret: '' });
@@ -105,6 +121,8 @@ export default function EntraSettingsPage() {
 
   if (!data || !form) return <div className="h-60 animate-pulse rounded-card bg-surface" />;
   const set = (patch: Partial<EntraSettings>) => setForm((f) => ({ ...f!, ...patch }));
+  // Only the manually editable fields — the API rejects read-only ones (hasClientSecret, scope…).
+  const payload = () => ({ enabled: form.enabled, tenantId: form.tenantId, clientId: form.clientId, clientSecret: form.clientSecret, redirectUri: form.redirectUri, syncCron: form.syncCron }) as EntraSettings;
   const configured = data.entra.enabled && !!data.entra.clientId && data.entra.hasClientSecret;
   const stats = dir.data?.entra;
 
@@ -135,7 +153,11 @@ export default function EntraSettingsPage() {
             {stats.lastGroupSync ? ` · last sync ${new Date(stats.lastGroupSync).toLocaleString()}` : ' · not synced yet'}
           </p>
         )}
-        {sync.data && <div className="mt-3"><Result result={{ ok: true, message: `Synced ${sync.data.users} users, ${sync.data.groups} groups, ${sync.data.memberships} memberships in ${(sync.data.durationMs / 1000).toFixed(1)}s.` }} /></div>}
+        {configured && (
+          <div className="mt-3">
+            <SyncStatus status={stats} />
+          </div>
+        )}
         {sync.error && <div className="mt-3"><Result result={{ ok: false, message: sync.error.message }} /></div>}
         {data.info.httpsWarning && (
           <p className="mt-4 rounded-xl bg-warning/12 px-3.5 py-2.5 text-sm">
@@ -144,12 +166,44 @@ export default function EntraSettingsPage() {
         )}
       </SettingsCard>
 
+      {configured && (
+        <SettingsCard
+          title="Who gets access"
+          description={
+            data.entra.syncScope === 'all'
+              ? 'Everyone in the tenant is synced and can sign in with Microsoft.'
+              : data.entra.syncGroups.length || data.entra.syncUsers.length
+                ? 'Only these groups (with their members) and people are synced and can sign in.'
+                : 'Nobody is synced yet — choose groups or people to bring into Trigon.'
+          }
+          actions={<Badge tone={data.entra.syncScope === 'all' ? 'warning' : 'accent'}>{data.entra.syncScope === 'all' ? 'Whole tenant' : 'Selected'}</Badge>}
+        >
+          {data.entra.syncScope === 'selected' && (data.entra.syncGroups.length > 0 || data.entra.syncUsers.length > 0) && (
+            <div className="mb-4 flex flex-wrap gap-1.5">
+              {data.entra.syncGroups.map((g) => (
+                <span key={g.id} className="inline-flex items-center gap-1.5 rounded-pill bg-accent-soft px-3 py-1 text-sm font-medium text-accent">
+                  <Users className="size-3.5" /> {g.name}
+                </span>
+              ))}
+              {data.entra.syncUsers.map((u) => (
+                <span key={u.id} className="inline-flex items-center rounded-pill bg-surface-2 px-3 py-1 text-sm font-medium text-ink-2">
+                  {u.name}
+                </span>
+              ))}
+            </div>
+          )}
+          <Button variant={data.entra.syncScope === 'selected' && !data.entra.syncGroups.length && !data.entra.syncUsers.length ? 'primary' : 'secondary'} onClick={() => setScopeOpen(true)}>
+            <Users className="size-4" /> Choose groups and people
+          </Button>
+        </SettingsCard>
+      )}
+
       <SettingsCard title="Manual configuration" description="Already have an app registration? Enter its details here.">
         <form
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
-            save.mutate(form);
+            save.mutate(payload());
           }}
         >
           <Toggle label="Enable Microsoft Entra ID" checked={form.enabled} onChange={(v) => set({ enabled: v })} />
@@ -178,14 +232,19 @@ export default function EntraSettingsPage() {
             <Button type="submit" busy={save.isPending}>
               Save
             </Button>
-            <Button type="button" variant="secondary" busy={test.isPending} onClick={() => test.mutate(form)}>
+            <Button type="button" variant="secondary" busy={test.isPending} onClick={() => test.mutate(payload())}>
               Test connection
             </Button>
           </div>
         </form>
       </SettingsCard>
 
-      <ConnectSheet open={connectOpen} onOpenChange={setConnectOpen} />
+      <ConnectSheet open={connectOpen} onOpenChange={setConnectOpen} onNext={() => setScopeOpen(true)} />
+      <EntraScopeSheet
+        open={scopeOpen}
+        onOpenChange={setScopeOpen}
+        initial={{ syncScope: data.entra.syncScope ?? 'all', syncGroups: data.entra.syncGroups ?? [], syncUsers: data.entra.syncUsers ?? [] }}
+      />
     </div>
   );
 }

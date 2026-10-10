@@ -3,6 +3,7 @@
 import type { LdapSettings } from '@trigon/shared';
 import { RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { SyncStatus } from '@/components/settings/sync-status';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
 import { useDirectoryStatus, useSaveSettings, useSettings, useSyncNow, useTestConnection } from '@/lib/admin-queries';
 
@@ -20,6 +21,11 @@ export default function LdapSettingsPage() {
 
   if (!data || !form) return <div className="h-60 animate-pulse rounded-card bg-surface" />;
   const set = (patch: Partial<LdapSettings>) => setForm((f) => ({ ...f!, ...patch }));
+  // Strip read-only flags (hasBindPassword) — the API rejects unknown fields.
+  const payload = () => {
+    const { hasBindPassword: _ignored, ...rest } = form;
+    return rest as LdapSettings;
+  };
   const stats = dir.data?.ldap;
   const active = data.ldap.enabled && !!data.ldap.url;
 
@@ -36,7 +42,9 @@ export default function LdapSettingsPage() {
               {stats.lastGroupSync ? ` · last sync ${new Date(stats.lastGroupSync).toLocaleString()}` : ' · not synced yet'}
             </p>
           )}
-          {sync.data && <div className="mt-3"><Result result={{ ok: true, message: `Synced ${sync.data.users} users, ${sync.data.groups} groups, ${sync.data.memberships} memberships.` }} /></div>}
+          <div className="mt-3">
+            <SyncStatus status={stats} />
+          </div>
           {sync.error && <div className="mt-3"><Result result={{ ok: false, message: sync.error.message }} /></div>}
         </SettingsCard>
       )}
@@ -46,7 +54,7 @@ export default function LdapSettingsPage() {
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
-            save.mutate(form);
+            save.mutate(payload());
           }}
         >
           <Toggle label="Enable LDAP / Active Directory" checked={form.enabled} onChange={(v) => set({ enabled: v })} />
@@ -101,7 +109,7 @@ export default function LdapSettingsPage() {
             <Button type="submit" busy={save.isPending}>
               Save
             </Button>
-            <Button type="button" variant="secondary" busy={test.isPending} onClick={() => test.mutate(form)}>
+            <Button type="button" variant="secondary" busy={test.isPending} onClick={() => test.mutate(payload())}>
               Test connection
             </Button>
           </div>

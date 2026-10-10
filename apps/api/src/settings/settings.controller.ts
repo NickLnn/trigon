@@ -1,7 +1,7 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Post, Put } from '@nestjs/common';
-import type { AllSettings, EntraSettings, LdapSettings } from '@trigon/shared';
+import { BadRequestException, Body, Controller, Get, HttpCode, Post, Put, Query } from '@nestjs/common';
+import type { AllSettings, DirectoryPick, EntraSettings, LdapSettings } from '@trigon/shared';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
 import { CronJob } from 'cron';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { EntraClientService, GRAPH } from '../directory/entra-client.service';
@@ -12,6 +12,18 @@ import { SettingsService } from './settings.service';
 class GeneralDto {
   @IsBoolean()
   allowLocalSignup: boolean;
+}
+
+class PickDto {
+  @IsString() @MaxLength(100) id: string;
+  @IsString() @MaxLength(300) name: string;
+  @IsOptional() @ValidateIf((_o, v) => v !== null) @IsString() @MaxLength(300) detail?: string | null;
+}
+
+class EntraScopeDto {
+  @IsIn(['all', 'selected']) syncScope: 'all' | 'selected';
+  @IsArray() @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => PickDto) syncGroups: PickDto[];
+  @IsArray() @ArrayMaxSize(2000) @ValidateNested({ each: true }) @Type(() => PickDto) syncUsers: PickDto[];
 }
 
 class EntraDto {
@@ -52,6 +64,7 @@ export class SettingsController {
     private readonly settings: SettingsService,
     private readonly ldap: LdapService,
     private readonly provisioner: EntraProvisionerService,
+    private readonly entraClient: EntraClientService,
   ) {}
 
   @Get()
@@ -87,6 +100,37 @@ export class SettingsController {
     assertCron(dto.syncCron);
     await this.settings.update('ldap', dto as Partial<LdapSettings>, user.id);
     return this.settings.getPublic('ldap');
+  }
+
+  /** Save which groups / users Microsoft sync imports (the "who gets access" picker). */
+  @Put('entra/scope')
+  async entraScope(@CurrentUser() user: AuthUser, @Body() dto: EntraScopeDto) {
+    await this.settings.update('entra', dto as Partial<EntraSettings>, user.id);
+    return this.settings.getPublic('entra');
+  }
+
+  /** Search the tenant's groups or users for the picker (app-only Graph token). */
+  @Get('entra/directory')
+  async searchDirectory(@Query('type') type: string, @Query('q') q = ''): Promise<DirectoryPick[]> {
+    const term = q.trim().replace(/"/g, '');
+    try {
+      if (type === 'group') {
+        const rows = await this.entraClient.graphPage<{ id: string; displayName: string; description: string | null; mail: string | null; securityEnabled: boolean }>(
+          term
+            ? `/groups?$search="displayName:${encodeURIComponent(term)}"&$select=id,displayName,description,mail,securityEnabled&$top=30&$count=true&$orderby=displayName`
+            : '/groups?$select=id,displayName,description,mail,securityEnabled&$top=30&$count=true&$orderby=displayName',
+        );
+        return rows.map((g) => ({ id: g.id, name: g.displayName, detail: g.description || g.mail || (g.securityEnabled ? 'Security group' : 'Microsoft 365 group') }));
+      }
+      const rows = await this.entraClient.graphPage<{ id: string; displayName: string; mail: string | null; userPrincipalName: string }>(
+        term
+          ? `/users?$search="displayName:${encodeURIComponent(term)}" OR "mail:${encodeURIComponent(term)}"&$select=id,displayName,mail,userPrincipalName&$top=30&$count=true&$orderby=displayName`
+          : '/users?$select=id,displayName,mail,userPrincipalName&$top=30&$count=true&$orderby=displayName',
+      );
+      return rows.map((u) => ({ id: u.id, name: u.displayName, detail: u.mail ?? u.userPrincipalName }));
+    } catch (err) {
+      throw new BadRequestException(`Microsoft Graph: ${(err as Error).message.slice(0, 300)}`);
+    }
   }
 
   /** Check credentials before (or after) saving: client-credentials token + read the organisation. */

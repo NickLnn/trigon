@@ -63,6 +63,26 @@ export class EntraClientService {
     return result.accessToken;
   }
 
+  /** GET a single Graph object; null when it no longer exists. */
+  async graphGet<T>(path: string): Promise<T | null> {
+    const token = await EntraClientService.appToken(await this.client());
+    const res = await fetch(`${GRAPH}${path}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000) });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Graph ${res.status}: ${await res.text()}`);
+    return (await res.json()) as T;
+  }
+
+  /** One page of a Graph collection (for pickers / search). */
+  async graphPage<T>(path: string): Promise<T[]> {
+    const token = await EntraClientService.appToken(await this.client());
+    const res = await fetch(`${GRAPH}${path}`, {
+      headers: { authorization: `Bearer ${token}`, ConsistencyLevel: 'eventual' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) throw new Error(`Graph ${res.status}: ${await res.text()}`);
+    return ((await res.json()) as { value: T[] }).value;
+  }
+
   /** GET a Graph collection, following @odata.nextLink until exhausted. */
   async graphList<T>(path: string): Promise<T[]> {
     const token = await EntraClientService.appToken(await this.client());

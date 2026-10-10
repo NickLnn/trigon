@@ -219,6 +219,39 @@ export interface EntraSettings {
   syncCron: string;
   /** Set when Trigon created the app registration itself. */
   provisionedAppId?: string | null;
+  /**
+   * What directory sync imports: the whole tenant, or only the chosen groups (with their nested
+   * members) plus individually chosen users. With 'selected', only synced people can sign in.
+   */
+  syncScope: 'all' | 'selected';
+  syncGroups: DirectoryPick[];
+  syncUsers: DirectoryPick[];
+}
+
+/** A group or user chosen in the "who gets access" picker (names kept for display). */
+export interface DirectoryPick {
+  id: string;
+  name: string;
+  detail?: string | null;
+}
+
+export interface SyncResult {
+  source: 'entra' | 'ldap';
+  users: number;
+  groups: number;
+  memberships: number;
+  deactivated: number;
+  durationMs: number;
+}
+
+export interface SyncSourceStatus {
+  enabled: boolean;
+  running: boolean;
+  startedAt: string | null;
+  lastResult: (SyncResult & { finishedAt: string }) | null;
+  lastError: string | null;
+  lastGroupSync: string | null;
+  accounts: number;
 }
 
 export interface LdapSettings {
