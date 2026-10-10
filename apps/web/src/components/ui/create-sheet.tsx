@@ -2,7 +2,7 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import type { PageType } from '@trigon/shared';
-import { ArrowLeft, BookOpenText, FileDown, FolderPlus, ListChecks, Loader2, NotebookPen, Upload } from 'lucide-react';
+import { ArrowLeft, BookOpenText, FileDown, FolderInput, FolderPlus, ListChecks, Loader2, NotebookPen, Upload } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
@@ -11,6 +11,7 @@ import { useCreateDocument, useSpaces, useUploadFile } from '@/lib/queries';
 import { KB_TEMPLATE, RUNBOOK_TEMPLATE } from '@/lib/templates';
 import { BottomSheet, SheetAction } from './bottom-sheet';
 import { SpaceIcon } from './doc-icon';
+import { ImportFolderSheet } from './import-folder-sheet';
 
 type Step = 'menu' | 'folder';
 /** Open straight into an action (quick actions on Home) instead of the menu. */
@@ -44,6 +45,7 @@ export function CreateSheet({
   const [step, setStep] = useState<Step>('menu');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [folderImport, setFolderImport] = useState(false);
   const writable = spaces?.filter((s) => s.myPermission === 'edit' || s.myPermission === 'manage') ?? [];
   const autoStarted = useRef(false);
 
@@ -169,6 +171,7 @@ export function CreateSheet({
           <div className={highlight('import')}>
             <SheetAction icon={<FileDown className="size-5" />} label="Import Markdown or HTML" hint="Turn .md / .html files into editable pages" onClick={() => importRef.current?.click()} />
           </div>
+          <SheetAction icon={<FolderInput className="size-5" />} label="Import folder or .zip" hint="Docmost / Trigon export with sub-pages and attachments" onClick={() => setFolderImport(true)} />
         </div>
       ) : (
         <form onSubmit={newFolder} className="space-y-4">
@@ -219,6 +222,17 @@ export function CreateSheet({
         </p>
       )}
       {error && <p className="mt-3 text-center text-meta text-danger">{error}</p>}
+      {folderImport && (
+        <ImportFolderSheet
+          open
+          onOpenChange={(v) => {
+            setFolderImport(v);
+            if (!v) onOpenChange(false);
+          }}
+          spaceId={spaceId}
+          parentId={parentId}
+        />
+      )}
     </BottomSheet>
   );
 }
