@@ -77,7 +77,8 @@ class ImportDocumentDto {
 export const DEFAULT_REVIEW_DAYS = 180;
 
 /** Review status as shown to people: "stale" once a verified page is older than its review interval. */
-export const displayStatus = sql<DisplayStatus>`CASE WHEN ${documents.status} = 'verified' AND ${documents.verifiedAt} + make_interval(days => coalesce(${documents.reviewIntervalDays}, ${DEFAULT_REVIEW_DAYS})) < now() THEN 'stale' ELSE ${documents.status}::text END`;
+/** reviewIntervalDays: null = default (180), 0 = never needs review. */
+export const displayStatus = sql<DisplayStatus>`CASE WHEN ${documents.status} = 'verified' AND coalesce(${documents.reviewIntervalDays}, ${DEFAULT_REVIEW_DAYS}) > 0 AND ${documents.verifiedAt} + make_interval(days => coalesce(${documents.reviewIntervalDays}, ${DEFAULT_REVIEW_DAYS})) < now() THEN 'stale' ELSE ${documents.status}::text END`;
 
 const editor = alias(users, 'editor');
 
@@ -132,7 +133,7 @@ class UpdateDocumentDto {
   @IsOptional()
   @ValidateIf((_o, v) => v !== null)
   @IsInt()
-  @Min(1)
+  @Min(0) // 0 = never
   @Max(3650)
   reviewIntervalDays?: number | null;
 

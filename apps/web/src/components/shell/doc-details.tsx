@@ -12,7 +12,7 @@ const TYPES: { key: PageType; label: string }[] = [
   { key: 'runbook', label: 'Runbook' },
   { key: 'kb', label: 'KB article' },
 ];
-const INTERVALS = [30, 90, 180, 365];
+const INTERVALS = [30, 90, 180, 365, 0]; // 0 = never
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -107,11 +107,13 @@ export function DocDetails({ doc }: { doc: DocumentDetail }) {
             onChange={(e) => patch.mutate({ reviewIntervalDays: Number(e.target.value) })}
             className="mt-0.5 rounded-lg bg-surface-2 px-2 py-1 text-sm font-medium outline-none"
           >
-            {[...new Set([...INTERVALS, doc.reviewIntervalDays])].sort((a, b) => a - b).map((d) => (
-              <option key={d} value={d}>
-                {d % 365 === 0 ? `${d / 365} year` : d % 30 === 0 ? `${d / 30} months` : `${d} days`}
-              </option>
-            ))}
+            {[...new Set([...INTERVALS, doc.reviewIntervalDays])]
+              .sort((a, b) => (a || Infinity) - (b || Infinity))
+              .map((d) => (
+                <option key={d} value={d}>
+                  {d === 0 ? 'Never' : d % 365 === 0 ? `${d / 365} year` : d % 30 === 0 ? `${d / 30} months` : `${d} days`}
+                </option>
+              ))}
           </select>
         </Row>
       )}
