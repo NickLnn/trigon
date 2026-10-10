@@ -3,19 +3,13 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
-import Image from '@tiptap/extension-image';
-import { TaskItem, TaskList } from '@tiptap/extension-list';
-import { TableKit } from '@tiptap/extension-table';
 import { Placeholder } from '@tiptap/extensions';
 import { EditorContent, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { api, collabUrl } from '@/lib/api';
 import { AutoCodeDetect } from './extensions/auto-code';
-import { Callout } from './extensions/callout';
-import { CodeBlock } from './extensions/code-block';
-import { Embed } from './extensions/embed';
+import { contentExtensions } from './extensions/content';
 import { SlashCommand } from './extensions/slash-command';
 import { WebClipper, type WebClipperStorage } from './extensions/web-clipper';
 
@@ -133,33 +127,11 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
         attributes: { class: 'trigon-prose', spellcheck: 'true' },
       },
       extensions: [
-        StarterKit.configure({
-          undoRedo: false, // Yjs owns history so undo is per-user, not global
-          codeBlock: false,
-          link: { openOnClick: false, autolink: true, defaultProtocol: 'https' },
-        }),
-        CodeBlock,
-        Callout,
-        Image.configure({ inline: false, allowBase64: false }),
-        // variant="steps" renders a numbered procedure (runbooks) instead of a plain checklist.
-        TaskList.extend({
-          addAttributes() {
-            return {
-              variant: {
-                default: null,
-                parseHTML: (el) => el.getAttribute('data-variant'),
-                renderHTML: (attrs) => (attrs.variant ? { 'data-variant': attrs.variant } : {}),
-              },
-            };
-          },
-        }),
-        TaskItem.configure({ nested: true }),
-        TableKit.configure({ table: { resizable: true } }),
+        ...contentExtensions,
         SlashCommand.configure({ uploadImage: (file) => uploadAttachment(documentId, file) }),
         Placeholder.configure({
           placeholder: ({ node }) => (node.type.name === 'heading' ? 'Heading' : "Type '/' for commands, or paste code, a link or a web page…"),
         }),
-        Embed,
         // Order matters: embeds claim bare URLs, then code detection, then the HTML clipper.
         AutoCodeDetect,
         WebClipper.configure({

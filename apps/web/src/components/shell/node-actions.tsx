@@ -3,11 +3,12 @@
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import { useQueryClient } from '@tanstack/react-query';
 import type { DocumentNode, SpaceSummary } from '@trigon/shared';
-import { Download, FilePlus2, MoreHorizontal, Pencil, Share2, Smile, Trash2 } from 'lucide-react';
+import { Download, FileOutput, FilePlus2, MoreHorizontal, Pencil, Share2, Smile, Trash2 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { CreateSheet } from '@/components/ui/create-sheet';
+import { ExportSheet } from '@/components/ui/export-sheet';
 import { IconPicker } from '@/components/ui/icon-picker';
 import { api } from '@/lib/api';
 import { ShareSheet } from './share-sheet';
@@ -110,7 +111,7 @@ export function NodeActions({
   const qc = useQueryClient();
   const router = useRouter();
   const params = useParams<{ docId?: string }>();
-  const [dialog, setDialog] = useState<'rename' | 'icon' | 'delete' | 'create' | 'share' | null>(null);
+  const [dialog, setDialog] = useState<'rename' | 'icon' | 'delete' | 'create' | 'share' | 'export' | null>(null);
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['tree', node.spaceId] });
     qc.invalidateQueries({ queryKey: ['recent'] });
@@ -118,8 +119,6 @@ export function NodeActions({
   };
   const patch = (body: Record<string, unknown>) => api(`/documents/${node.id}`, { method: 'PATCH', json: body }).then(refresh);
   const kindLabel = node.kind === 'folder' ? 'folder' : node.kind === 'page' ? 'page' : 'file';
-
-  if (!canEdit && node.kind !== 'file') return null;
 
   return (
     <>
@@ -159,6 +158,11 @@ export function NodeActions({
                 Download
               </Item>
             )}
+            {node.kind !== 'file' && (
+              <Item icon={<FileOutput className="size-4" />} onSelect={() => setDialog('export')}>
+                Export…
+              </Item>
+            )}
             {canEdit && (
               <>
                 <Menu.Separator className="my-1 h-px bg-line" />
@@ -192,6 +196,7 @@ export function NodeActions({
       />
       {dialog === 'create' && <CreateSheet open onOpenChange={(v) => !v && setDialog(null)} spaceId={node.spaceId} parentId={node.id} />}
       {dialog === 'share' && <ShareSheet open onOpenChange={(v) => !v && setDialog(null)} type="document" id={node.id} name={node.title} />}
+      {dialog === 'export' && <ExportSheet open onOpenChange={(v) => !v && setDialog(null)} spaceId={node.spaceId} node={node} name={node.title} />}
     </>
   );
 }
@@ -200,7 +205,7 @@ export function NodeActions({
 export function SpaceActions({ space, triggerClassName = '' }: { space: SpaceSummary; triggerClassName?: string }) {
   const qc = useQueryClient();
   const router = useRouter();
-  const [dialog, setDialog] = useState<'rename' | 'icon' | 'delete' | 'share' | null>(null);
+  const [dialog, setDialog] = useState<'rename' | 'icon' | 'delete' | 'share' | 'export' | null>(null);
   if (space.myPermission !== 'manage') return null;
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['spaces'] });
@@ -229,6 +234,9 @@ export function SpaceActions({ space, triggerClassName = '' }: { space: SpaceSum
             <Item icon={<Share2 className="size-4" />} onSelect={() => setDialog('share')}>
               Members and permissions
             </Item>
+            <Item icon={<FileOutput className="size-4" />} onSelect={() => setDialog('export')}>
+              Export space…
+            </Item>
             <Menu.Separator className="my-1 h-px bg-line" />
             <Item icon={<Trash2 className="size-4" />} danger onSelect={() => setDialog('delete')}>
               Delete space
@@ -239,6 +247,7 @@ export function SpaceActions({ space, triggerClassName = '' }: { space: SpaceSum
       <RenameSheet open={dialog === 'rename'} onOpenChange={(v) => !v && setDialog(null)} title="Rename space" initial={space.name} onSave={(name) => patch({ name })} />
       <IconPicker open={dialog === 'icon'} onOpenChange={(v) => !v && setDialog(null)} current={space.icon} onSelect={(icon) => patch({ icon: icon ?? '' })} />
       {dialog === 'share' && <ShareSheet open onOpenChange={(v) => !v && setDialog(null)} type="space" id={space.id} name={space.name} />}
+      {dialog === 'export' && <ExportSheet open onOpenChange={(v) => !v && setDialog(null)} spaceId={space.id} node={null} name={space.name} />}
       <ConfirmSheet
         open={dialog === 'delete'}
         onOpenChange={(v) => !v && setDialog(null)}
