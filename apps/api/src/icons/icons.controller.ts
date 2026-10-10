@@ -52,17 +52,22 @@ export class IconsController {
       .from(icons)
       .where(inArray(icons.domain, ICON_CATALOG.map((c) => c.domain)));
     const byDomain = new Map(stored.map((s) => [s.domain, s.id]));
-    return ICON_CATALOG.map((c) => ({ ...c, iconId: byDomain.get(c.domain) ?? null }));
+    return ICON_CATALOG.map(({ iconUrl: _pinned, ...c }) => ({
+      ...c,
+      iconId: byDomain.get(c.domain) ?? null,
+      failed: !byDomain.has(c.domain) && this.icons.hasFailed(c.domain),
+    }));
   }
 
   /** Fetch every catalog icon not yet stored (runs in the background; the picker polls the catalog). */
   @Post('catalog/warm')
   async warm(@CurrentUser() user: AuthUser) {
     const catalog = await this.catalog();
-    const missing = catalog.filter((c) => !c.iconId);
+    const missing = catalog.filter((c) => !c.iconId && !c.failed);
+    const pinned = new Map(ICON_CATALOG.map((c) => [c.domain, c.iconUrl]));
     void (async () => {
       for (let i = 0; i < missing.length; i += 6) {
-        await Promise.allSettled(missing.slice(i, i + 6).map((c) => this.icons.fetchForDomain(c.domain, c.name, user.id)));
+        await Promise.allSettled(missing.slice(i, i + 6).map((c) => this.icons.fetchForDomain(c.domain, c.name, user.id, pinned.get(c.domain))));
       }
     })();
     return { fetching: missing.length };
@@ -79,7 +84,8 @@ export class IconsController {
   @Post('fetch')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async fetch(@CurrentUser() user: AuthUser, @Body() dto: FetchIconDto) {
-    return { id: await this.icons.fetchForDomain(dto.domain, dto.name, user.id) };
+    const pinned = ICON_CATALOG.find((c) => c.domain === dto.domain.trim().toLowerCase())?.iconUrl;
+    return { id: await this.icons.fetchForDomain(dto.domain, dto.name, user.id, pinned) };
   }
 
   @Post('upload')
