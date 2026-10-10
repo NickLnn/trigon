@@ -127,7 +127,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
   const indicator = zone === 'before' || zone === 'after' ? (
     <span
       className="pointer-events-none absolute right-1 h-0.5 rounded-full bg-accent"
-      style={{ left: depth * 14 + 8, [zone === 'before' ? 'top' : 'bottom']: -1 }}
+      style={{ left: 12 + depth * 18, [zone === 'before' ? 'top' : 'bottom']: -1 }}
     />
   ) : null;
 
@@ -135,12 +135,12 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
     <li>
       <div className="group/row relative" onContextMenu={(e) => { e.preventDefault(); setMenuOpen(true); }}>
       {isFolder ? (
-        <button {...dnd} className={cls} style={{ paddingLeft: depth * 14 + 4 }} onClick={() => toggle(node.id)} aria-expanded={open}>
+        <button {...dnd} className={cls} style={{ paddingLeft: 10 + depth * 18 }} onClick={() => toggle(node.id)} aria-expanded={open}>
           {row}
           {indicator}
         </button>
       ) : (
-        <Link {...dnd} href={`/d/${node.id}`} className={cls} style={{ paddingLeft: depth * 14 + 4 }} aria-current={active ? 'page' : undefined}>
+        <Link {...dnd} href={`/d/${node.id}`} className={cls} style={{ paddingLeft: 10 + depth * 18 }} aria-current={active ? 'page' : undefined}>
           {row}
           {indicator}
         </Link>
@@ -197,6 +197,17 @@ export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: stri
   const move = useMoveDocument();
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
   const [hover, setHover] = useState<{ id: string; zone: Zone } | null>(null);
+
+  useEffect(() => {
+    if (!hover) return;
+    const clear = () => setHover(null);
+    window.addEventListener('dragend', clear);
+    window.addEventListener('drop', clear);
+    return () => {
+      window.removeEventListener('dragend', clear);
+      window.removeEventListener('drop', clear);
+    };
+  }, [hover]);
 
   useEffect(() => {
     if (!data || !activeId) return;
@@ -267,6 +278,18 @@ export function useSpaceRootDrop(spaceId: string) {
   const qc = useQueryClient();
   const move = useMoveDocument();
   const [over, setOver] = useState(false);
+  // A drop on a row inside the space never reaches this handler (rows stop propagation), so clear
+  // the highlight whenever any drag ends anywhere.
+  useEffect(() => {
+    if (!over) return;
+    const clear = () => setOver(false);
+    window.addEventListener('dragend', clear);
+    window.addEventListener('drop', clear);
+    return () => {
+      window.removeEventListener('dragend', clear);
+      window.removeEventListener('drop', clear);
+    };
+  }, [over]);
   return {
     over,
     handlers: {
