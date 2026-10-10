@@ -36,11 +36,17 @@ docker-compose.yml   Postgres 17 + pgvector, Redis 7, api, web
 | `main` | Stable — only code that has been tested and works. This is what everyone runs. |
 | `dev`  | Active development — may be broken. Work happens here, then merges into `main`. |
 
-Typical flow: commit to `dev` (or a short-lived feature branch off `dev`) → verify → open a PR `dev → main`.
+Typical flow: feature branch off `dev` → pull request into `dev` → test on the NAS with the `:dev` images → pull request `dev → main`.
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setting up a development machine.
 
 ## Running it
 
-### Option A — everything in Docker (e.g. on the NAS)
+### Option A — Synology / any Docker host, prebuilt images (recommended)
+
+GitHub Actions publishes ready-to-run images to `ghcr.io/nicklnn/trigon-api` and `ghcr.io/nicklnn/trigon-web`
+(`:latest` from `main`, `:dev` from `dev`). Follow **[deploy/synology/README.md](deploy/synology/README.md)**.
+
+### Option A2 — build from source with Docker
 
 ```bash
 cp .env.example .env        # then set POSTGRES_PASSWORD, JWT_ACCESS_SECRET, APP_URL

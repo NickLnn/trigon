@@ -59,6 +59,8 @@ export async function apiBlob(path: string): Promise<Blob> {
 
 export function collabUrl(): string {
   if (process.env.NEXT_PUBLIC_COLLAB_URL) return process.env.NEXT_PUBLIC_COLLAB_URL;
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.hostname}:4001`;
+  // Behind HTTPS (Cloudflare / reverse proxy) the collaboration socket is routed at /collab on the
+  // same domain; on a plain-HTTP LAN install it's reached directly on port 4001.
+  if (location.protocol === 'https:') return `wss://${location.host}/collab`;
+  return `ws://${location.hostname}:4001`;
 }
