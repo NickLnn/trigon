@@ -80,7 +80,9 @@ export async function readImportSource(files: File[]): Promise<ImportEntry[]> {
   for (const f of files) {
     if (/\.zip$/i.test(f.name) && files.length === 1) {
       const unzipped = unzipSync(new Uint8Array(await f.arrayBuffer()));
-      for (const [path, data] of Object.entries(unzipped)) {
+      for (const [raw, data] of Object.entries(unzipped)) {
+        // Windows' built-in "Compress" can write backslash separators.
+        const path = raw.replace(/\\/g, '/');
         if (!path.endsWith('/')) entries.push({ path, file: new Blob([data as BlobPart], { type: MIME[ext(path)] ?? '' }) });
       }
     } else {
