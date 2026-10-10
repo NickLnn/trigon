@@ -15,6 +15,8 @@ async function bootstrap() {
   app.set('trust proxy', 1);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
   app.use(cookieParser());
+  // Imported pages (long scripts, big tables) easily exceed the 100 KB default.
+  app.useBodyParser('json', { limit: '10mb' });
   app.enableCors({ origin: config.get('APP_URL') ?? 'http://localhost:3000', credentials: true });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.enableShutdownHooks();

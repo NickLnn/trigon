@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { DOC_STATUSES, PAGE_TYPES, type DisplayStatus, type HealthStats } from '@trigon/shared';
@@ -65,6 +66,11 @@ class ImportDocumentDto {
   @IsOptional()
   @IsIn(['none', 'draft'])
   status?: 'none' | 'draft';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  icon?: string;
 }
 
 /** Default review interval when a page doesn't set its own. */
@@ -74,6 +80,12 @@ export const DEFAULT_REVIEW_DAYS = 180;
 export const displayStatus = sql<DisplayStatus>`CASE WHEN ${documents.status} = 'verified' AND ${documents.verifiedAt} + make_interval(days => coalesce(${documents.reviewIntervalDays}, ${DEFAULT_REVIEW_DAYS})) < now() THEN 'stale' ELSE ${documents.status}::text END`;
 
 const editor = alias(users, 'editor');
+
+class ImportHtmlDto {
+  @IsString()
+  @MaxLength(5_000_000)
+  html: string;
+}
 
 /** Rough HTML → plain text, only used to make imported pages searchable before first open. */
 function htmlToText(html: string) {
@@ -207,6 +219,7 @@ export class DocumentsController {
         importHtml: dto.html,
         pageType: dto.pageType ?? 'page',
         status: dto.status ?? 'none',
+        icon: dto.icon,
         ownerId: user.id,
         textContent: htmlToText(dto.html).slice(0, 1_000_000),
         position: (last ?? 0) + 1,
@@ -407,6 +420,22 @@ export class DocumentsController {
       .where(eq(documents.id, id))
       .returning({ id: documents.id, title: documents.title, parentId: documents.parentId, position: documents.position });
     return doc;
+  }
+
+  /**
+   * Replace the pending import HTML of a page that hasn't been opened yet (bulk importer: it creates
+   * the page, uploads the page's images, then sets the final HTML with local image URLs).
+   */
+  @Put(':id/import-html')
+  async setImportHtml(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ImportHtmlDto) {
+    await this.perms.assertDocument(user, id, 'edit');
+    const [row] = await this.db
+      .update(documents)
+      .set({ importHtml: dto.html, textContent: htmlToText(dto.html).slice(0, 1_000_000), updatedById: user.id })
+      .where(and(eq(documents.id, id), isNull(documents.ydoc)))
+      .returning({ id: documents.id });
+    if (!row) throw new BadRequestException('This page has already been opened and edited');
+    return { ok: true };
   }
 
   /** Mark a page as verified (reviewed and correct) — resets its review clock. */
