@@ -1,7 +1,7 @@
 'use client';
 
 import { isTextFile } from '@trigon/shared';
-import { ArrowLeft, ChevronRight, Download, Info, Share2, Smile } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Download, Info, PanelRightClose, PanelRightOpen, Share2, Smile } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -131,6 +131,30 @@ function Presence({ status, peers }: { status: ConnectionStatus; peers: Peer[] }
   );
 }
 
+const RAIL_KEY = 'trigon.doc.rail';
+
+/** Desktop right rail (presence, outline, details) — open by default, remembered per device. */
+function useRail(): [boolean, () => void] {
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(RAIL_KEY) === 'closed') setOpen(false);
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+  const toggle = () =>
+    setOpen((v) => {
+      try {
+        localStorage.setItem(RAIL_KEY, v ? 'closed' : 'open');
+      } catch {
+        /* storage unavailable */
+      }
+      return !v;
+    });
+  return [open, toggle];
+}
+
 function Outline({ items }: { items: OutlineItem[] }) {
   if (!items.length) return null;
   const jump = (i: number) => document.querySelectorAll('.trigon-prose h1, .trigon-prose h2, .trigon-prose h3, .trigon-prose h4')[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -159,6 +183,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
   const [peers, setPeers] = useState<Peer[]>([]);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [sheet, setSheet] = useState<'share' | 'details' | null>(null);
+  const [railOpen, toggleRail] = useRail();
   const onStatus = useCallback((s: ConnectionStatus) => setConn(s), []);
 
   if (error) return <p className="p-10 text-center text-ink-2">{error.message}</p>;
@@ -183,6 +208,17 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
       <button onClick={() => setSheet('details')} className="press grid size-9 place-items-center rounded-full border border-line bg-surface xl:hidden" aria-label="Details">
         <Info className="size-4" />
       </button>
+      {doc.kind === 'page' && (
+        <button
+          onClick={toggleRail}
+          className="press hidden size-9 place-items-center rounded-full border border-line bg-surface text-ink-2 hover:text-ink xl:grid"
+          aria-label={railOpen ? 'Hide side panel' : 'Show side panel'}
+          aria-pressed={railOpen}
+          title={railOpen ? 'Hide side panel (full width)' : 'Show side panel'}
+        >
+          {railOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
+        </button>
+      )}
     </div>
   );
 
@@ -254,8 +290,8 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
   const typeLabel = doc.pageType === 'runbook' ? 'Runbook' : doc.pageType === 'kb' ? 'KB article' : null;
 
   return (
-    <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_17rem]">
-      <article className="min-h-dvh bg-surface xl:border-r xl:border-line">
+    <div className={railOpen ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_17rem]' : ''}>
+      <article className={`min-h-dvh bg-surface ${railOpen ? 'xl:border-r xl:border-line' : ''}`}>
         {/* Top bar */}
         <div className="sticky top-0 z-20 flex items-center gap-2 bg-surface/90 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur md:px-6">
           <button onClick={() => router.back()} className="press grid size-9 shrink-0 place-items-center rounded-full hover:bg-surface-2 md:hidden" aria-label="Back">
@@ -267,7 +303,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
           {toolbar}
         </div>
 
-        <div className="mx-auto max-w-3xl px-5 pb-32 pt-4 md:px-10">
+        <div className={`mx-auto px-5 pb-32 pt-4 md:px-10 ${railOpen ? 'max-w-3xl' : 'max-w-5xl'}`}>
           <PageIcon id={doc.id} icon={doc.icon} editable={canEdit} />
           <TitleInput id={doc.id} title={doc.title} editable={canEdit} />
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -297,7 +333,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
       </article>
 
       {/* Right rail (wide screens) */}
-      <aside className="hidden xl:block">
+      <aside className={railOpen ? 'hidden xl:block' : 'hidden'}>
         <div className="sticky top-0 max-h-dvh space-y-6 overflow-y-auto p-5">
           <Presence status={conn} peers={peers} />
           <Outline items={outline} />
