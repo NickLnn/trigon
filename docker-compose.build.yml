@@ -1,0 +1,17 @@
+# Optional override: build the API and web images from this checkout instead of pulling them.
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  api:
+    image: trigon-api:local
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+
+  web:
+    image: trigon-web:local
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        API_INTERNAL_URL: http://api:4000
+        NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-}

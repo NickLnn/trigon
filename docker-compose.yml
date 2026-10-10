@@ -1,8 +1,11 @@
-# Trigon — full stack.  Copy .env.example to .env and fill in the secrets first.
+# Trigon — full stack using the prebuilt images GitHub Actions publishes to ghcr.io.
 #
-#   Infrastructure only (for local `npm run dev`):  docker compose up -d postgres redis
-#   Everything:                                     docker compose up -d --build
+#   Run / update (e.g. on the Synology):   docker compose pull && docker compose up -d
+#   Only the databases (local development): docker compose up -d postgres redis
+#   Build the app images from source instead:
+#     docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
+# TRIGON_TAG in .env picks the channel: latest (main branch, stable) or dev (dev branch).
 name: trigon
 
 services:
@@ -42,9 +45,7 @@ services:
 
   api:
     container_name: trigon-api
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
+    image: ghcr.io/nicklnn/trigon-api:${TRIGON_TAG:-latest}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -62,7 +63,6 @@ services:
     volumes:
       - ./data/storage:/data/storage
     ports:
-      - '${API_PORT:-4000}:4000'
       - '${COLLAB_PORT:-4001}:4001'
     depends_on:
       postgres:
@@ -72,12 +72,7 @@ services:
 
   web:
     container_name: trigon-web
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-      args:
-        API_INTERNAL_URL: http://api:4000
-        NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-}
+    image: ghcr.io/nicklnn/trigon-web:${TRIGON_TAG:-latest}
     restart: unless-stopped
     ports:
       - '${WEB_PORT:-3000}:3000'

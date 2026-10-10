@@ -26,7 +26,8 @@ apps/
 packages/
   shared/     Types and helpers used by both (permission levels, embed URL matching, …)
 docker/       Postgres init script (enables pgvector)
-docker-compose.yml   Postgres 17 + pgvector, Redis 7, api, web
+docker-compose.yml   Postgres 17 + pgvector, Redis 7, api, web (prebuilt images)
+docker-compose.build.yml  Optional: build api/web from source
 ```
 
 ## Branches
@@ -46,26 +47,11 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setting up a development machine.
 GitHub Actions publishes ready-to-run images to `ghcr.io/nicklnn/trigon-api` and `ghcr.io/nicklnn/trigon-web`
 (`:latest` from `main`, `:dev` from `dev`). Follow **[deploy/synology/README.md](deploy/synology/README.md)**.
 
-### Option A2 — build from source with Docker
+### Option A2 — build the images yourself
 
 ```bash
-cp .env.example .env        # then set POSTGRES_PASSWORD, JWT_ACCESS_SECRET, APP_URL
-# Synology/Xpenology Docker does not create bind-mount folders itself; the API runs as uid 1000.
-mkdir -p data/postgres data/redis data/storage && chown 1000:1000 data/storage
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
-
-If a host port is already taken (DSM often uses 5432), change `POSTGRES_PORT` / `REDIS_PORT` / `WEB_PORT` in `.env` —
-containers talk to each other over the internal Docker network, so only the published port changes.
-
-Web on `:3000`, API on `:4000`, collaboration WebSocket on `:4001`. Database migrations run automatically
-when the API container starts. The first account you register becomes the admin.
-
-> **HTTPS is required for the PWA.** Browsers only enable service workers (install to home screen,
-> offline mode) on `https://` or `localhost`, and Microsoft Entra only accepts HTTPS redirect URIs.
-> On Synology DSM, put a reverse-proxy rule with a Let's Encrypt certificate in front of port 3000
-> (and 4001 for WebSockets, or route `/collab` to it and set `NEXT_PUBLIC_COLLAB_URL=wss://<host>/collab`),
-> then set `APP_URL=https://…` and `COOKIE_SECURE=true`.
 
 ### Option B — local development
 
