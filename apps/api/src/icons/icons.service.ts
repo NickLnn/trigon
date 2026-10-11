@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { safeFetch } from '../common/ssrf';
 import { Database, InjectDb } from '../db/db.module';
-import { icons } from '../db/schema';
+import { documents, icons, spaces } from '../db/schema';
 import { StorageService } from '../files/storage.service';
+import { ICON_CATALOG } from './catalog';
 
 const IMAGE = /^image\/(png|x-icon|vnd\.microsoft\.icon|svg\+xml|webp|jpeg|gif|avif)$/;
 const MAX_ICON_BYTES = 1024 * 1024;
@@ -56,7 +57,7 @@ export function iconCandidates(html: string, base: URL): Candidate[] {
  * <link rel=icon> > /favicon.ico) and user-uploaded icon images.
  */
 @Injectable()
-export class IconsService {
+export class IconsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(IconsService.name);
   private inFlight = new Map<string, Promise<string>>();
   /** Domains whose last fetch found nothing, with when — the picker shows a letter tile for them. */
@@ -81,6 +82,41 @@ export class IconsService {
     @InjectDb() private readonly db: Database,
     private readonly storage: StorageService,
   ) {}
+
+  onApplicationBootstrap() {
+    void this.refreshPinned();
+  }
+
+  /**
+   * Catalog logos whose pinned URL changed (or that were taken from the vendor's website before a logo
+   * was pinned) are downloaded again. The replacement gets a new id — icon URLs are cached as immutable —
+   * and every space and page using the old one is pointed at it.
+   */
+  private async refreshPinned() {
+    for (const { domain, name, iconUrl } of ICON_CATALOG) {
+      if (!iconUrl) continue;
+      try {
+        const old = await this.findByDomain(domain);
+        if (!old || old.sourceUrl === iconUrl) continue;
+        const img = await this.tryImage(iconUrl);
+        if (!img) continue;
+        const storageKey = await this.storage.put(img.buffer);
+        await this.db.transaction(async (tx) => {
+          await tx.delete(icons).where(eq(icons.id, old.id));
+          const [row] = await tx
+            .insert(icons)
+            .values({ name, domain, sourceUrl: iconUrl, storageKey, mimeType: img.mime, sizeBytes: img.buffer.length, createdById: old.createdById })
+            .returning({ id: icons.id });
+          await tx.update(spaces).set({ icon: `img:${row.id}` }).where(eq(spaces.icon, `img:${old.id}`));
+          await tx.update(documents).set({ icon: `img:${row.id}` }).where(eq(documents.icon, `img:${old.id}`));
+        });
+        await this.storage.remove(old.storageKey).catch(() => undefined);
+        this.logger.log(`Updated the ${name} logo`);
+      } catch (err) {
+        this.logger.warn(`Could not update the ${name} logo: ${(err as Error).message}`);
+      }
+    }
+  }
 
   async findByDomain(domain: string) {
     const [row] = await this.db.select().from(icons).where(eq(icons.domain, domain));
@@ -131,7 +167,7 @@ export class IconsService {
     // slow or bot-blocked) website.
     if (iconUrl) {
       const img = await this.tryImage(iconUrl);
-      if (img) return this.store(domain, name, img, userId);
+      if (img) return this.store(domain, name, img, iconUrl, userId);
     }
     const candidates: Candidate[] = [];
     for (const origin of [`https://${domain}`, `https://www.${domain}`]) {
@@ -152,17 +188,17 @@ export class IconsService {
 
     for (const c of candidates) {
       const img = await this.tryImage(c.url);
-      if (img) return this.store(domain, name, img, userId);
+      if (img) return this.store(domain, name, img, c.url, userId);
     }
     this.logger.warn(`No usable icon found for ${domain}`);
     throw new BadRequestException(`Couldn't find an icon on ${domain}`);
   }
 
-  private async store(domain: string, name: string, img: { buffer: Buffer; mime: string }, userId?: string) {
+  private async store(domain: string, name: string, img: { buffer: Buffer; mime: string }, sourceUrl: string, userId?: string) {
     const storageKey = await this.storage.put(img.buffer);
     const [row] = await this.db
       .insert(icons)
-      .values({ name, domain, storageKey, mimeType: img.mime, sizeBytes: img.buffer.length, createdById: userId })
+      .values({ name, domain, sourceUrl, storageKey, mimeType: img.mime, sizeBytes: img.buffer.length, createdById: userId })
       .onConflictDoNothing()
       .returning({ id: icons.id });
     if (row) return row.id;
