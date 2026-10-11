@@ -49,7 +49,7 @@ TRIGON_UPDATE_INTERVAL=900   # seconds between checks (default 15 minutes)
 ```
 
 Then run `docker compose up -d` once. This starts a small `trigon-updater` container
-([Watchtower](https://github.com/nicholas-fedor/watchtower)) that checks GitHub's registry and restarts
+([Watchtower](https://github.com/nicholas-fedor/watchtower), which also keeps itself up to date) that checks GitHub's registry and restarts
 `trigon-api` / `trigon-web` on the new version (database migrations run on start). It only touches the
 Trigon app containers — never Postgres, Redis or anything else on the host. See what it did with
 `docker logs trigon-updater`. Remove the line and run `docker compose up -d --remove-orphans` to turn it off.
