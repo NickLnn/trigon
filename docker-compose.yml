@@ -1,6 +1,7 @@
 # Trigon — full stack using the prebuilt images GitHub Actions publishes to ghcr.io.
 #
 #   Run / update (e.g. on the Synology):   docker compose pull && docker compose up -d
+#   Update automatically instead:          set COMPOSE_PROFILES=autoupdate in .env, then docker compose up -d
 #   Only the databases (local development): docker compose up -d postgres redis
 #   Build the app images from source instead:
 #     docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
@@ -47,6 +48,9 @@ services:
     container_name: trigon-api
     image: ghcr.io/nicklnn/trigon-api:${TRIGON_TAG:-latest}
     restart: unless-stopped
+    labels: &autoupdate
+      com.centurylinklabs.watchtower.enable: 'true'
+      com.centurylinklabs.watchtower.scope: trigon
     env_file: .env
     environment:
       # Discrete PG* vars instead of a URL, so the password needs no URL-escaping.
@@ -74,7 +78,27 @@ services:
     container_name: trigon-web
     image: ghcr.io/nicklnn/trigon-web:${TRIGON_TAG:-latest}
     restart: unless-stopped
+    labels: *autoupdate
     ports:
       - '${WEB_PORT:-3000}:3000'
     depends_on:
       - api
+
+  # Optional automatic updates (COMPOSE_PROFILES=autoupdate in .env): checks GitHub's registry for new
+  # trigon-api / trigon-web images and restarts them on the new version. Only containers labelled with
+  # the "trigon" scope are touched — never the databases, nor anything else running on the host.
+  updater:
+    container_name: trigon-updater
+    image: nickfedor/watchtower:1.23
+    profiles: [autoupdate]
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_SCOPE: trigon
+      WATCHTOWER_LABEL_ENABLE: 'true'
+      WATCHTOWER_POLL_INTERVAL: ${TRIGON_UPDATE_INTERVAL:-900}
+      WATCHTOWER_CLEANUP: 'true'
+      TZ: ${TZ:-UTC}
+    labels:
+      com.centurylinklabs.watchtower.scope: trigon
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

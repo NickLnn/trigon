@@ -39,6 +39,21 @@ then **Project → trigon → Action → Restart**.
 
 Switch channels by changing `TRIGON_TAG` in `.env` (`latest` ↔ `dev`) and updating as above.
 
+### Automatic updates
+
+Instead of updating by hand, let Trigon update itself whenever a new image is published. In `.env`:
+
+```bash
+COMPOSE_PROFILES=autoupdate
+TRIGON_UPDATE_INTERVAL=900   # seconds between checks (default 15 minutes)
+```
+
+Then run `docker compose up -d` once. This starts a small `trigon-updater` container
+([Watchtower](https://github.com/nicholas-fedor/watchtower)) that checks GitHub's registry and restarts
+`trigon-api` / `trigon-web` on the new version (database migrations run on start). It only touches the
+Trigon app containers — never Postgres, Redis or anything else on the host. See what it did with
+`docker logs trigon-updater`. Remove the line and run `docker compose up -d --remove-orphans` to turn it off.
+
 ## Behind Cloudflare (later)
 
 Point the tunnel's public hostname at `http://<nas-ip>:<WEB_PORT>`, and add a second rule for the path
