@@ -2,20 +2,50 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import type { EntraSettings, EntraSignInStatus } from '@trigon/shared';
-import { Check, Copy, ExternalLink, RefreshCw, Sparkles, Users } from 'lucide-react';
+import { Check, Copy, ExternalLink, Globe, RefreshCw, Sparkles, Unplug, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { EntraScopeSheet } from '@/components/settings/entra-scope-sheet';
 import { SyncStatus } from '@/components/settings/sync-status';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
-import { useDirectoryStatus, useProvisionStatus, useSaveSettings, useSettings, useStartProvision, useSyncNow, useTestConnection } from '@/lib/admin-queries';
+import {
+  useDirectoryStatus,
+  useDisconnectEntra,
+  useProvisionStatus,
+  useSaveSettings,
+  useSettings,
+  useStartProvision,
+  useSyncNow,
+  useTestConnection,
+} from '@/lib/admin-queries';
 
-/** "Connect to Microsoft": device-code sign-in, then Trigon creates and consents its own app registration. */
-function ConnectSheet({ open, onOpenChange, onNext }: { open: boolean; onOpenChange: (v: boolean) => void; onNext: () => void }) {
+/** The address the admin is on, if Microsoft would accept it as a sign-in redirect. */
+function currentHttpsOrigin() {
+  if (typeof window === 'undefined') return '';
+  const { origin, protocol, hostname } = window.location;
+  return protocol === 'https:' || hostname === 'localhost' ? origin : '';
+}
+
+function validPublicUrl(v: string) {
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' || (u.protocol === 'http:' && u.hostname === 'localhost');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * "Connect to Microsoft": the admin confirms Trigon's public HTTPS address, then signs in with a device
+ * code and Trigon creates (or updates) and consents its own app registration.
+ */
+function ConnectSheet({ open, onOpenChange, onNext, known }: { open: boolean; onOpenChange: (v: boolean) => void; onNext: () => void; known: string[] }) {
   const start = useStartProvision();
   const status = useProvisionStatus(open);
   const s = status.data;
   const [copied, setCopied] = useState(false);
+  const [publicUrl, setPublicUrl] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
   const active = s?.state === 'waiting_for_sign_in' || s?.state === 'working';
   const qc = useQueryClient();
 
@@ -26,10 +56,49 @@ function ConnectSheet({ open, onOpenChange, onNext }: { open: boolean; onOpenCha
     }
   }, [s?.state, qc]);
 
+  // Every new run starts with the address check; a run already in progress is shown as is.
   useEffect(() => {
-    if (open && !active && s?.state !== 'done') start.mutate();
+    if (!open) return;
+    setConfirmed(false);
+    start.reset();
+    setPublicUrl(currentHttpsOrigin() || known.find((o) => o.startsWith('https://')) || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  if (!confirmed && !active) {
+    const ok = validPublicUrl(publicUrl);
+    return (
+      <BottomSheet open={open} onOpenChange={onOpenChange} title="Connect to Microsoft" description="First, confirm the address people use to open Trigon.">
+        <div className="space-y-4">
+          <Field
+            label="Trigon's public address"
+            hint="Microsoft only sends people back to HTTPS addresses after sign-in. Use the address you published (e.g. through Cloudflare), not an internal http:// one."
+          >
+            <TextInput value={publicUrl} onChange={(e) => setPublicUrl(e.target.value.trim())} placeholder="https://trigon.example.com" inputMode="url" />
+          </Field>
+          {ok && (
+            <p className="flex items-start gap-2 rounded-xl bg-surface-2 px-3.5 py-2.5 text-sm text-ink-2">
+              <Globe className="mt-0.5 size-4 shrink-0" />
+              <span>
+                Sign-in redirect: <span className="break-all font-mono text-meta text-ink">{new URL(publicUrl).origin}/api/auth/entra/callback</span>
+              </span>
+            </p>
+          )}
+          {publicUrl && !ok && <Result result={{ ok: false, message: 'Enter an https:// address, e.g. https://trigon.example.com' }} />}
+          <Button
+            className="w-full"
+            disabled={!ok}
+            onClick={() => {
+              setConfirmed(true);
+              start.mutate(new URL(publicUrl).origin);
+            }}
+          >
+            <Check className="size-4" /> This address is correct, continue
+          </Button>
+        </div>
+      </BottomSheet>
+    );
+  }
 
   return (
     <BottomSheet open={open} onOpenChange={onOpenChange} title="Connect to Microsoft" description="Sign in with a Global Administrator (or Privileged Role Administrator) account of your tenant.">
@@ -60,7 +129,7 @@ function ConnectSheet({ open, onOpenChange, onNext }: { open: boolean; onOpenCha
         </div>
       )}
 
-      {s && s.state !== 'idle' && (
+      {s && s.state !== 'idle' && !start.isPending && !start.error && (
         <ol className="mt-5 space-y-2.5">
           {s.steps.map((step, i) => {
             const running = !step.done && (i === 0 || s.steps[i - 1].done) && active;
@@ -78,7 +147,7 @@ function ConnectSheet({ open, onOpenChange, onNext }: { open: boolean; onOpenCha
         </ol>
       )}
 
-      {s?.state === 'done' && (
+      {s?.state === 'done' && !start.isPending && !start.error && (
         <div className="mt-5 space-y-3">
           <Result result={{ ok: true, message: s.message ?? 'Connected.' }} />
           <Button
@@ -92,15 +161,15 @@ function ConnectSheet({ open, onOpenChange, onNext }: { open: boolean; onOpenCha
           </Button>
         </div>
       )}
-      {(s?.state === 'error' || start.error) && (
+      {((s?.state === 'error' && !start.isPending) || start.error) && (
         <div className="mt-5 space-y-3">
-          <Result result={{ ok: false, message: s?.message ?? start.error?.message ?? 'Something went wrong' }} />
-          <Button onClick={() => start.mutate()} busy={start.isPending}>
+          <Result result={{ ok: false, message: start.error?.message ?? s?.message ?? 'Something went wrong' }} />
+          <Button onClick={() => setConfirmed(false)}>
             Try again
           </Button>
         </div>
       )}
-      {!s && start.isPending && <p className="text-center text-ink-3">Contacting Microsoft…</p>}
+      {start.isPending && <p className="text-center text-ink-3">Contacting Microsoft…</p>}
     </BottomSheet>
   );
 }
@@ -134,6 +203,11 @@ function SignInStatus({ status, onReconnect }: { status: EntraSignInStatus; onRe
   );
 }
 
+const DISCONNECT_PROMPT = (createdByTrigon: boolean) =>
+  createdByTrigon
+    ? 'Disconnect from Microsoft? Trigon deletes its app registration from your tenant; Microsoft sign-in and directory sync stop until you connect again.'
+    : 'Disconnect from Microsoft? Microsoft sign-in and directory sync stop until you connect again. Your own app registration is left as is.';
+
 export default function EntraSettingsPage() {
   const { data } = useSettings();
   const save = useSaveSettings('entra');
@@ -143,6 +217,7 @@ export default function EntraSettingsPage() {
   const [form, setForm] = useState<EntraSettings | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
+  const disconnect = useDisconnectEntra();
 
   useEffect(() => {
     if (data) setForm({ ...data.entra, clientSecret: '' });
@@ -175,7 +250,18 @@ export default function EntraSettingsPage() {
               <RefreshCw className="size-4" /> Sync users & groups now
             </Button>
           )}
+          {!!data.entra.clientId && (
+            <Button
+              variant="danger"
+              busy={disconnect.isPending}
+              onClick={() => confirm(DISCONNECT_PROMPT(!!data.entra.provisionedAppId)) && disconnect.mutate()}
+            >
+              <Unplug className="size-4" /> Disconnect
+            </Button>
+          )}
         </div>
+        {disconnect.data && <div className="mt-3"><Result result={disconnect.data} /></div>}
+        {disconnect.error && <div className="mt-3"><Result result={{ ok: false, message: disconnect.error.message }} /></div>}
         {stats && configured && (
           <p className="mt-3 text-sm text-ink-2">
             {stats.accounts} Microsoft users linked
@@ -249,7 +335,7 @@ export default function EntraSettingsPage() {
             <TextInput type="password" autoComplete="new-password" value={form.clientSecret ?? ''} onChange={(e) => set({ clientSecret: e.target.value })} placeholder={data.entra.hasClientSecret ? '••••••••••••' : 'Secret value'} />
           </Field>
           <Field label="Redirect URI" hint="Leave empty and Trigon uses <address>/api/auth/entra/callback for every HTTPS address it is opened at, and registers them with Microsoft itself.">
-            <TextInput value={form.redirectUri} onChange={(e) => set({ redirectUri: e.target.value.trim() })} placeholder={`${data.info.appUrl}/api/auth/entra/callback`} />
+            <TextInput value={form.redirectUri} onChange={(e) => set({ redirectUri: e.target.value.trim() })} placeholder={data.info.entraRedirectUri || 'https://trigon.example.com/api/auth/entra/callback'} />
           </Field>
           <Field label="Sync schedule (cron)" hint="Default every 6 hours. Leave empty to sync only manually.">
             <TextInput value={form.syncCron} onChange={(e) => set({ syncCron: e.target.value })} placeholder="0 */6 * * *" />
@@ -269,7 +355,7 @@ export default function EntraSettingsPage() {
         </form>
       </SettingsCard>
 
-      <ConnectSheet open={connectOpen} onOpenChange={setConnectOpen} onNext={() => setScopeOpen(true)} />
+      <ConnectSheet open={connectOpen} onOpenChange={setConnectOpen} onNext={() => setScopeOpen(true)} known={data.entra.signInOrigins ?? []} />
       <EntraScopeSheet
         open={scopeOpen}
         onOpenChange={setScopeOpen}
