@@ -21,6 +21,7 @@ import { REFRESH_COOKIE, type AuthConfig, type SessionUser } from '@trigon/share
 import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 import type { Request, Response } from 'express';
 import { CurrentUser, Public, type AuthUser } from '../common/decorators';
+import { EntraRedirectService, redirectAllowed } from '../directory/entra-redirect.service';
 import { LdapService } from '../directory/ldap.service';
 import { SettingsService } from '../settings/settings.service';
 import { IdentityService } from '../users/identity.service';
@@ -57,6 +58,7 @@ export class AuthController {
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
     private readonly settings: SettingsService,
+    private readonly redirects: EntraRedirectService,
   ) {}
 
   private async signupAllowed() {
@@ -111,11 +113,18 @@ export class AuthController {
   /** Step 1 of Microsoft sign-in: redirect to the Entra authorize endpoint. */
   @Public()
   @Get('entra/login')
-  async entraLogin(@Query('returnTo') returnTo: string, @Res() res: Response) {
-    const { url, login } = await this.entra.begin(safeReturnTo(returnTo));
+  async entraLogin(@Query('returnTo') returnTo: string, @Req() req: Request, @Res() res: Response) {
+    const { redirectUri, origin } = await this.redirects.forRequest(req);
+    if (!redirectAllowed(redirectUri)) {
+      const message = 'Sign in with Microsoft needs Trigon to be opened over HTTPS. Ask an administrator to open Trigon at its https:// address once.';
+      return res.redirect(`${origin}/login?error=${encodeURIComponent(message)}`);
+    }
+    // Registers the address with Microsoft if it is new (cached once it has been verified).
+    await this.redirects.ensure();
+    const { url, login } = await this.entra.begin(safeReturnTo(returnTo), redirectUri, origin);
     res.cookie(OIDC_COOKIE, await this.jwt.signAsync(login, { expiresIn: '10m' }), {
       httpOnly: true,
-      secure: this.config.get('COOKIE_SECURE') === 'true',
+      secure: this.config.get('COOKIE_SECURE') === 'true' || origin.startsWith('https://'),
       sameSite: 'lax',
       path: '/',
       maxAge: 10 * 60_000,
@@ -127,9 +136,6 @@ export class AuthController {
   @Public()
   @Get('entra/callback')
   async entraCallback(@Query() q: Record<string, string>, @Req() req: Request, @Res() res: Response) {
-    const appUrl = this.config.getOrThrow<string>('APP_URL');
-    if (q.error) return res.redirect(`${appUrl}/login?error=${encodeURIComponent(q.error_description ?? q.error)}`);
-
     let login: EntraLoginState | undefined;
     try {
       login = await this.jwt.verifyAsync<EntraLoginState>(req.cookies?.[OIDC_COOKIE] ?? '');
@@ -137,15 +143,18 @@ export class AuthController {
       login = undefined;
     }
     res.clearCookie(OIDC_COOKIE, { path: '/' });
+    // The signed state names the (trusted) address the sign-in started from.
+    const base = login?.origin ?? new URL(this.settings.appUrl()).origin;
+    if (q.error) return res.redirect(`${base}/login?error=${encodeURIComponent(q.error_description ?? q.error)}`);
 
     try {
       const user = await this.entra.complete(q.code, q.state, login);
       if (!user.active) throw new UnauthorizedException('Account disabled');
       await this.tokens.issueSession(res, user, req.headers['user-agent']);
       await this.identity.touchLogin(user.id);
-      res.redirect(`${appUrl}${safeReturnTo(login?.returnTo)}`);
+      res.redirect(`${base}${safeReturnTo(login?.returnTo)}`);
     } catch (err) {
-      res.redirect(`${appUrl}/login?error=${encodeURIComponent((err as Error).message)}`);
+      res.redirect(`${base}/login?error=${encodeURIComponent((err as Error).message)}`);
     }
   }
 
@@ -165,7 +174,9 @@ export class AuthController {
   }
 
   @Get('me')
-  async me(@CurrentUser() user: AuthUser) {
+  async me(@CurrentUser() user: AuthUser, @Req() req: Request) {
+    // An admin's browser tells us the real public (HTTPS) address — Microsoft sign-in is enabled there.
+    if (user.role === 'admin') this.redirects.learnFromAdmin(req).catch(() => undefined);
     const session = await this.identity.toSessionUser(user.id);
     if (!session) throw new UnauthorizedException();
     return session;

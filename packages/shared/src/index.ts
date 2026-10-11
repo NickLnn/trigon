@@ -220,6 +220,11 @@ export interface EntraSettings {
   /** Set when Trigon created the app registration itself. */
   provisionedAppId?: string | null;
   /**
+   * HTTPS addresses an admin has opened Trigon at (e.g. a Cloudflare / reverse-proxy hostname next to
+   * the LAN APP_URL). Trigon keeps <origin>/api/auth/entra/callback registered for each one.
+   */
+  signInOrigins?: string[];
+  /**
    * What directory sync imports: the whole tenant, or only the chosen groups (with their nested
    * members) plus individually chosen users. With 'selected', only synced people can sign in.
    */
@@ -273,7 +278,16 @@ export interface AllSettings {
   entra: EntraSettings;
   ldap: LdapSettings;
   /** Read-only facts the settings UI needs. */
-  info: { appUrl: string; entraRedirectUri: string; httpsWarning: boolean };
+  info: { appUrl: string; entraRedirectUri: string; httpsWarning: boolean; entraSignIn: EntraSignInStatus };
+}
+
+/** Whether Trigon's sign-in redirect addresses are registered on the Entra app. */
+export interface EntraSignInStatus {
+  /** Callback URLs Microsoft must accept (HTTPS or localhost only). */
+  redirectUris: string[];
+  /** ok = all registered; reconnect = Trigon lacks permission to update its app; none = no HTTPS address yet. */
+  state: 'ok' | 'reconnect' | 'none' | 'error' | 'unknown';
+  message: string | null;
 }
 
 export type ProvisionState = 'idle' | 'waiting_for_sign_in' | 'working' | 'done' | 'error';

@@ -24,10 +24,6 @@ export class EntraClientService {
     return s.enabled && !!s.tenantId && !!s.clientId && !!s.clientSecret;
   }
 
-  redirectUri() {
-    return this.settings.entraRedirectUri();
-  }
-
   /** Build a client for explicit settings (used by "Test connection" before saving). */
   static build(s: Pick<EntraSettings, 'tenantId' | 'clientId' | 'clientSecret'>, logger?: Logger) {
     return new ConfidentialClientApplication({
@@ -70,6 +66,18 @@ export class EntraClientService {
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`Graph ${res.status}: ${await res.text()}`);
     return (await res.json()) as T;
+  }
+
+  /** PATCH a Graph object with the app token. */
+  async graphPatch(path: string, body: unknown): Promise<void> {
+    const token = await EntraClientService.appToken(await this.client());
+    const res = await fetch(`${GRAPH}${path}`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(`Graph ${res.status}: ${await res.text()}`);
   }
 
   /** One page of a Graph collection (for pickers / search). */

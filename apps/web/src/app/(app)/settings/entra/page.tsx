@@ -1,7 +1,7 @@
 'use client';
 
 import { useQueryClient } from '@tanstack/react-query';
-import type { EntraSettings } from '@trigon/shared';
+import type { EntraSettings, EntraSignInStatus } from '@trigon/shared';
 import { Check, Copy, ExternalLink, RefreshCw, Sparkles, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
@@ -105,6 +105,35 @@ function ConnectSheet({ open, onOpenChange, onNext }: { open: boolean; onOpenCha
   );
 }
 
+/** Whether "Sign in with Microsoft" can work at the addresses Trigon is opened at. */
+function SignInStatus({ status, onReconnect }: { status: EntraSignInStatus; onReconnect: () => void }) {
+  if (status.state === 'ok') {
+    return (
+      <div className="mt-4 text-sm text-ink-2">
+        <p className="font-medium text-ink">Sign in with Microsoft works at:</p>
+        <ul className="mt-1 space-y-0.5">
+          {status.redirectUris.map((u) => (
+            <li key={u} className="break-all font-mono text-meta">
+              {new URL(u).origin}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  if (status.state === 'unknown' || !status.message) return null;
+  return (
+    <div className={`mt-4 rounded-xl px-3.5 py-2.5 text-sm ${status.state === 'error' ? 'bg-danger/10' : 'bg-warning/12'}`}>
+      <p>{status.message}</p>
+      {status.state === 'reconnect' && (
+        <Button className="mt-2.5" onClick={onReconnect}>
+          <Sparkles className="size-4" /> Reconnect
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export default function EntraSettingsPage() {
   const { data } = useSettings();
   const save = useSaveSettings('entra');
@@ -159,9 +188,10 @@ export default function EntraSettingsPage() {
           </div>
         )}
         {sync.error && <div className="mt-3"><Result result={{ ok: false, message: sync.error.message }} /></div>}
-        {data.info.httpsWarning && (
+        {configured && <SignInStatus status={data.info.entraSignIn} onReconnect={() => setConnectOpen(true)} />}
+        {!configured && data.info.httpsWarning && (
           <p className="mt-4 rounded-xl bg-warning/12 px-3.5 py-2.5 text-sm">
-            Directory sync works over HTTP. <b>Sign in with Microsoft</b> needs Trigon on HTTPS, because Microsoft rejects http:// redirect addresses other than localhost.
+            Directory sync works over HTTP. <b>Sign in with Microsoft</b> switches on by itself once you open Trigon over HTTPS, because Microsoft rejects http:// redirect addresses other than localhost.
           </p>
         )}
       </SettingsCard>
@@ -218,7 +248,7 @@ export default function EntraSettingsPage() {
           <Field label="Client secret" hint={data.entra.hasClientSecret ? 'A secret is stored. Leave empty to keep it.' : undefined}>
             <TextInput type="password" autoComplete="new-password" value={form.clientSecret ?? ''} onChange={(e) => set({ clientSecret: e.target.value })} placeholder={data.entra.hasClientSecret ? '••••••••••••' : 'Secret value'} />
           </Field>
-          <Field label="Redirect URI" hint={`Leave empty to use ${data.info.appUrl}/api/auth/entra/callback`}>
+          <Field label="Redirect URI" hint="Leave empty and Trigon uses <address>/api/auth/entra/callback for every HTTPS address it is opened at, and registers them with Microsoft itself.">
             <TextInput value={form.redirectUri} onChange={(e) => set({ redirectUri: e.target.value.trim() })} placeholder={`${data.info.appUrl}/api/auth/entra/callback`} />
           </Field>
           <Field label="Sync schedule (cron)" hint="Default every 6 hours. Leave empty to sync only manually.">

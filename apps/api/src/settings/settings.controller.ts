@@ -5,6 +5,7 @@ import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength
 import { CronJob } from 'cron';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { EntraClientService, GRAPH } from '../directory/entra-client.service';
+import { EntraRedirectService } from '../directory/entra-redirect.service';
 import { LdapService } from '../directory/ldap.service';
 import { EntraProvisionerService } from './entra-provisioner.service';
 import { SettingsService } from './settings.service';
@@ -65,6 +66,7 @@ export class SettingsController {
     private readonly ldap: LdapService,
     private readonly provisioner: EntraProvisionerService,
     private readonly entraClient: EntraClientService,
+    private readonly redirects: EntraRedirectService,
   ) {}
 
   @Get()
@@ -78,6 +80,7 @@ export class SettingsController {
         appUrl,
         entraRedirectUri: await this.settings.entraRedirectUri(),
         httpsWarning: !appUrl.startsWith('https://') && !appUrl.includes('localhost'),
+        entraSignIn: await this.redirects.ensure(),
       },
     };
   }
