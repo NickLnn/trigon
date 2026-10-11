@@ -43,3 +43,7 @@ Switch channels by changing `TRIGON_TAG` in `.env` (`latest` ↔ `dev`) and upda
 
 Point the tunnel's public hostname at `http://<nas-ip>:<WEB_PORT>`, and add a second rule for the path
 `/collab` to `http://<nas-ip>:4001` (live editing). Then set `APP_URL=https://…` and `COOKIE_SECURE=true`.
+
+Microsoft sign-in follows automatically: the first time an admin opens Trigon at the HTTPS address, Trigon
+registers that address with its Microsoft app. Installs connected before this existed show a one-time
+**Reconnect** button under Settings → Microsoft Entra ID.

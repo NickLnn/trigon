@@ -2,6 +2,7 @@ import { PublicClientApplication } from '@azure/msal-node';
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import type { EntraProvisionStatus } from '@trigon/shared';
 import { GRAPH } from '../directory/entra-client.service';
+import { EntraRedirectService } from '../directory/entra-redirect.service';
 import { SettingsService } from './settings.service';
 
 /** Microsoft's first-party "Microsoft Graph Command Line Tools" public client (what Connect-MgGraph uses). */
@@ -16,17 +17,26 @@ const SETUP_SCOPES = [
   'https://graph.microsoft.com/Organization.Read.All',
 ];
 
-/** What the created Trigon app gets. */
-const APP_ROLES = ['User.Read.All', 'Group.Read.All', 'GroupMember.Read.All'];
+/**
+ * What the created Trigon app gets. Application.ReadWrite.OwnedBy (the app owns only itself) lets
+ * Trigon add new sign-in redirect addresses to its own registration later, without an admin.
+ */
+const APP_ROLES = ['User.Read.All', 'Group.Read.All', 'GroupMember.Read.All', 'Application.ReadWrite.OwnedBy'];
 const DELEGATED_SCOPES = ['openid', 'profile', 'email', 'offline_access', 'User.Read'];
 
 const STEPS = [
   'Sign in as a Microsoft Entra administrator',
-  'Create the "Trigon" app registration',
+  'Create or update the "Trigon" app registration',
   'Create its service principal and client secret',
   'Grant admin consent for directory read access',
   'Save the connection in Trigon',
 ];
+
+interface GraphApp {
+  id: string;
+  appId: string;
+  web?: { homePageUrl?: string | null; logoutUrl?: string | null; implicitGrantSettings?: unknown; redirectUris?: string[] };
+}
 
 interface GraphSp {
   id: string;
@@ -41,13 +51,19 @@ interface GraphSp {
  * with that delegated token Trigon registers its own app in the tenant, grants it admin consent for
  * User.Read.All / Group.Read.All / GroupMember.Read.All (+ sign-in scopes), creates a client secret and
  * stores everything in Settings. The setup token is discarded afterwards.
+ *
+ * Running it again ("Reconnect") updates the app Trigon created before — permissions, ownership and
+ * redirect URIs — instead of registering a duplicate, and keeps the stored client secret.
  */
 @Injectable()
 export class EntraProvisionerService {
   private readonly logger = new Logger(EntraProvisionerService.name);
   private status: EntraProvisionStatus = { state: 'idle', steps: STEPS.map((label) => ({ label, done: false })) };
 
-  constructor(private readonly settings: SettingsService) {}
+  constructor(
+    private readonly settings: SettingsService,
+    private readonly redirects: EntraRedirectService,
+  ) {}
 
   current(): EntraProvisionStatus {
     return this.status;
@@ -122,8 +138,19 @@ export class EntraProvisionerService {
     return (res.status === 204 ? undefined : await res.json()) as T;
   }
 
+  /** Like graph(), but null when the object does not exist. */
+  private async graphFind<T>(token: string, path: string): Promise<T | null> {
+    try {
+      return await this.graph<T>(token, 'GET', path);
+    } catch (err) {
+      if (/→ 404:/.test((err as Error).message)) return null;
+      throw err;
+    }
+  }
+
   private async provision(token: string, tenantId: string, userId: string) {
-    const redirectUri = await this.settings.entraRedirectUri();
+    // Every address Trigon is known to be reachable at over HTTPS (or localhost).
+    const redirectUris = await this.redirects.wanted();
     const graphSp = await this.graph<GraphSp>(
       token,
       'GET',
@@ -139,71 +166,113 @@ export class EntraProvisionerService {
       if (!scope) throw new Error(`Graph scope ${v} not found`);
       return scope.id;
     });
+    const requiredResourceAccess = [
+      {
+        resourceAppId: MS_GRAPH_APP_ID,
+        resourceAccess: [...scopeIds.map((id) => ({ id, type: 'Scope' })), ...roleIds.map((id) => ({ id, type: 'Role' }))],
+      },
+    ];
 
-    // Entra only accepts http:// redirect URIs for localhost; other http URLs are left out
-    // (sign-in then needs HTTPS, but directory sync works regardless).
-    const redirectAllowed = redirectUri.startsWith('https://') || /^http:\/\/localhost[:/]/.test(redirectUri);
-    const app = await this.graph<{ id: string; appId: string }>(token, 'POST', '/applications', {
-      displayName: 'Trigon',
-      signInAudience: 'AzureADMyOrg',
-      web: { redirectUris: redirectAllowed ? [redirectUri] : [] },
-      requiredResourceAccess: [
-        {
-          resourceAppId: MS_GRAPH_APP_ID,
-          resourceAccess: [
-            ...scopeIds.map((id) => ({ id, type: 'Scope' })),
-            ...roleIds.map((id) => ({ id, type: 'Role' })),
-          ],
-        },
-      ],
-      notes: 'Created automatically by Trigon (Settings → Microsoft Entra ID).',
-    });
+    // Reconnect: update the app Trigon created earlier rather than registering another one.
+    const stored = await this.settings.get('entra');
+    const existing =
+      stored.provisionedAppId && stored.tenantId === tenantId
+        ? await this.graphFind<GraphApp>(token, `/applications(appId='${stored.provisionedAppId}')?$select=id,appId,web`)
+        : null;
+    let app: GraphApp;
+    if (existing) {
+      const have = existing.web?.redirectUris ?? [];
+      const { homePageUrl, logoutUrl, implicitGrantSettings } = existing.web ?? {};
+      await this.graph(token, 'PATCH', `/applications/${existing.id}`, {
+        requiredResourceAccess,
+        web: { homePageUrl, logoutUrl, implicitGrantSettings, redirectUris: [...new Set([...have, ...redirectUris])] },
+      });
+      app = existing;
+    } else {
+      app = await this.graph<GraphApp>(token, 'POST', '/applications', {
+        displayName: 'Trigon',
+        signInAudience: 'AzureADMyOrg',
+        web: { redirectUris },
+        requiredResourceAccess,
+        notes: 'Created automatically by Trigon (Settings → Microsoft Entra ID).',
+      });
+    }
     this.step(1);
 
-    const sp = await this.graph<{ id: string }>(token, 'POST', '/servicePrincipals', { appId: app.appId });
-    const secret = await this.graph<{ secretText: string }>(token, 'POST', `/applications/${app.id}/addPassword`, {
-      passwordCredential: {
-        displayName: 'Trigon server',
-        endDateTime: new Date(Date.now() + 2 * 365 * 86_400_000).toISOString(),
-      },
-    });
+    const sp =
+      (await this.graphFind<{ id: string }>(token, `/servicePrincipals(appId='${app.appId}')?$select=id`)) ??
+      (await this.graph<{ id: string }>(token, 'POST', '/servicePrincipals', { appId: app.appId }));
+    // The app owns itself, so Application.ReadWrite.OwnedBy covers exactly its own registration.
+    const owners = await this.graph<{ value: { id: string }[] }>(token, 'GET', `/applications/${app.id}/owners?$select=id`);
+    if (!owners.value.some((o) => o.id === sp.id)) {
+      await this.graph(token, 'POST', `/applications/${app.id}/owners/$ref`, { '@odata.id': `${GRAPH}/directoryObjects/${sp.id}` });
+    }
+    const keepSecret = !!existing && stored.clientId === app.appId && !!stored.clientSecret;
+    const secret = keepSecret
+      ? undefined
+      : await this.graph<{ secretText: string }>(token, 'POST', `/applications/${app.id}/addPassword`, {
+          passwordCredential: {
+            displayName: 'Trigon server',
+            endDateTime: new Date(Date.now() + 2 * 365 * 86_400_000).toISOString(),
+          },
+        });
     this.step(2);
 
+    const assigned = await this.graph<{ value: { appRoleId: string; resourceId: string }[] }>(
+      token,
+      'GET',
+      `/servicePrincipals/${sp.id}/appRoleAssignments`,
+    );
     for (const appRoleId of roleIds) {
+      if (assigned.value.some((a) => a.appRoleId === appRoleId && a.resourceId === graphSp.id)) continue;
       await this.graph(token, 'POST', `/servicePrincipals/${graphSp.id}/appRoleAssignedTo`, {
         principalId: sp.id,
         resourceId: graphSp.id,
         appRoleId,
       });
     }
-    await this.graph(token, 'POST', '/oauth2PermissionGrants', {
-      clientId: sp.id,
-      consentType: 'AllPrincipals',
-      resourceId: graphSp.id,
-      scope: DELEGATED_SCOPES.join(' '),
-    });
+    const grants = await this.graph<{ value: { id: string }[] }>(
+      token,
+      'GET',
+      `/oauth2PermissionGrants?$filter=clientId eq '${sp.id}' and resourceId eq '${graphSp.id}' and consentType eq 'AllPrincipals'`,
+    );
+    if (grants.value.length) {
+      await this.graph(token, 'PATCH', `/oauth2PermissionGrants/${grants.value[0].id}`, { scope: DELEGATED_SCOPES.join(' ') });
+    } else {
+      await this.graph(token, 'POST', '/oauth2PermissionGrants', {
+        clientId: sp.id,
+        consentType: 'AllPrincipals',
+        resourceId: graphSp.id,
+        scope: DELEGATED_SCOPES.join(' '),
+      });
+    }
     this.step(3);
 
+    // Registered just now with the admin's token — no need to wait for the app's own permission to propagate.
+    this.redirects.markRegistered(app.appId, redirectUris);
     await this.settings.update(
       'entra',
-      {
-        enabled: true,
-        tenantId,
-        clientId: app.appId,
-        clientSecret: secret.secretText,
-        provisionedAppId: app.appId,
-        // Nothing is imported until the admin picks which groups / users get access.
-        syncScope: 'selected',
-        syncGroups: [],
-        syncUsers: [],
-      },
+      existing
+        ? { enabled: true, tenantId, clientId: app.appId, clientSecret: secret?.secretText, provisionedAppId: app.appId }
+        : {
+            enabled: true,
+            tenantId,
+            clientId: app.appId,
+            clientSecret: secret!.secretText,
+            provisionedAppId: app.appId,
+            // Nothing is imported until the admin picks which groups / users get access.
+            syncScope: 'selected',
+            syncGroups: [],
+            syncUsers: [],
+          },
       userId,
     );
     this.step(4);
-    if (!redirectAllowed) {
+    if (!redirectUris.length) {
       this.status = {
         ...this.status,
-        message: `Connected. Note: Microsoft only allows sign-in redirects to HTTPS addresses, so "Sign in with Microsoft" will work once Trigon is served over HTTPS (add ${redirectUri.replace('http://', 'https://')} as a redirect URI then). Directory sync works now.`,
+        message:
+          'Connected. Directory sync works now. "Sign in with Microsoft" switches on by itself the first time an administrator opens Trigon over HTTPS (Microsoft rejects http:// addresses other than localhost).',
       };
     }
   }

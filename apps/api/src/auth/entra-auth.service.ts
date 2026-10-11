@@ -9,6 +9,10 @@ export interface EntraLoginState {
   state: string;
   verifier: string;
   returnTo: string;
+  /** Redirect URI sent to Microsoft; the token request must repeat it exactly. */
+  redirectUri: string;
+  /** Address the browser started from — where it goes back to afterwards. */
+  origin: string;
 }
 
 /** OIDC authorization-code + PKCE sign-in with Microsoft Entra ID, via MSAL. */
@@ -24,18 +28,18 @@ export class EntraAuthService {
     return this.entra.enabled();
   }
 
-  async begin(returnTo: string): Promise<{ url: string; login: EntraLoginState }> {
+  async begin(returnTo: string, redirectUri: string, origin: string): Promise<{ url: string; login: EntraLoginState }> {
     const { verifier, challenge } = await this.entra.crypto.generatePkceCodes();
     const state = this.entra.crypto.createNewGuid();
     const url = await (await this.entra.client()).getAuthCodeUrl({
       scopes: SCOPES,
-      redirectUri: await this.entra.redirectUri(),
+      redirectUri,
       codeChallenge: challenge,
       codeChallengeMethod: 'S256',
       state,
       prompt: 'select_account',
     });
-    return { url, login: { state, verifier, returnTo } };
+    return { url, login: { state, verifier, returnTo, redirectUri, origin } };
   }
 
   async complete(code: string, state: string, login: EntraLoginState | undefined) {
@@ -43,7 +47,7 @@ export class EntraAuthService {
     const result = await (await this.entra.client()).acquireTokenByCode({
       code,
       scopes: SCOPES,
-      redirectUri: await this.entra.redirectUri(),
+      redirectUri: login.redirectUri,
       codeVerifier: login.verifier,
     });
     const claims = result.idTokenClaims as Record<string, unknown>;

@@ -74,6 +74,7 @@ export class SettingsService {
         redirectUri: env('ENTRA_REDIRECT_URI'),
         syncCron: env('ENTRA_SYNC_CRON', '0 */6 * * *'),
         provisionedAppId: null,
+        signInOrigins: [],
         syncScope: 'all',
         syncGroups: [],
         syncUsers: [],
