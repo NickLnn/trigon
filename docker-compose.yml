@@ -89,16 +89,16 @@ services:
   # the "trigon" scope are touched — never the databases, nor anything else running on the host.
   updater:
     container_name: trigon-updater
-    image: nickfedor/watchtower:1.23
+    image: nickfedor/watchtower:latest
     profiles: [autoupdate]
     restart: unless-stopped
+    # Keeps itself current too (it publishes no port, so Watchtower can replace its own container).
+    labels: *autoupdate
     environment:
       WATCHTOWER_SCOPE: trigon
       WATCHTOWER_LABEL_ENABLE: 'true'
       WATCHTOWER_POLL_INTERVAL: ${TRIGON_UPDATE_INTERVAL:-900}
       WATCHTOWER_CLEANUP: 'true'
       TZ: ${TZ:-UTC}
-    labels:
-      com.centurylinklabs.watchtower.scope: trigon
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
