@@ -7,8 +7,7 @@ import { Globe, Loader2, Search, Trash2, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { BottomSheet } from './bottom-sheet';
-
-const EMOJI = ['📘', '📗', '📕', '📒', '📁', '🗂️', '🛠️', '⚙️', '🔧', '🧰', '🖥️', '💻', '🗄️', '🌐', '🔐', '🛡️', '🔑', '☁️', '🚀', '📊', '📈', '🧪', '🐛', '📦', '🔌', '📡', '🧭', '📝', '✅', '⚠️', '🔥', '💡', '🏢', '👥', '🎯', '📌'];
+import { EMOJI_GROUPS } from './emoji-catalog';
 
 type Tab = 'brands' | 'emoji' | 'upload';
 
@@ -81,6 +80,14 @@ export function IconPicker({
     for (const i of items) map.set(i.category, [...(map.get(i.category) ?? []), i]);
     return [...map.entries()];
   }, [catalog.data, term]);
+  const emojiGroups = useMemo(() => {
+    if (!term) return EMOJI_GROUPS;
+    // Search matches keywords and group names; an emoji listed in several groups shows up once.
+    const seen = new Set<string>();
+    const items = EMOJI_GROUPS.flatMap((g) => g.items.filter((i) => `${i.k} ${g.name}`.toLowerCase().includes(term)))
+      .filter((i) => !seen.has(i.e) && seen.add(i.e));
+    return items.length ? [{ name: 'Results', items }] : [];
+  }, [term]);
   const customItems = (custom.data ?? []).filter((c) => !term || c.name.toLowerCase().includes(term) || c.domain?.includes(term));
 
   const tile = (key: string, label: string, iconId: string | null, onClick: () => void, selected: boolean, failed = false) => (
@@ -169,12 +176,31 @@ export function IconPicker({
       )}
 
       {tab === 'emoji' && (
-        <div className="grid grid-cols-6 gap-1 sm:grid-cols-9">
-          {EMOJI.map((e) => (
-            <button key={e} onClick={() => choose(e)} className={`press grid aspect-square place-items-center rounded-xl text-2xl hover:bg-surface-2 ${current === e ? 'bg-accent-soft ring-2 ring-accent' : ''}`}>
-              {e}
-            </button>
-          ))}
+        <div>
+          <label className="flex items-center gap-2 rounded-xl bg-surface-2 px-3 ring-accent focus-within:ring-2">
+            <Search className="size-4 text-ink-3" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search, e.g. backup, firewall, vpn, scripts" className="min-w-0 flex-1 bg-transparent py-2.5 outline-none" />
+          </label>
+          <div className="mt-4 max-h-[50dvh] space-y-4 overflow-y-auto pr-1">
+            {emojiGroups.map((g) => (
+              <section key={g.name}>
+                <h3 className="mb-1.5 text-meta font-semibold uppercase tracking-wider text-ink-3">{g.name}</h3>
+                <div className="grid grid-cols-6 gap-1 sm:grid-cols-9">
+                  {g.items.map(({ e, k }) => (
+                    <button
+                      key={e}
+                      onClick={() => choose(e)}
+                      title={k.split(' ').slice(0, 3).join(', ')}
+                      className={`press grid aspect-square place-items-center rounded-xl text-2xl hover:bg-surface-2 ${current === e ? 'bg-accent-soft ring-2 ring-accent' : ''}`}
+                    >
+                      {e}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+            {!emojiGroups.length && <p className="py-6 text-center text-sm text-ink-3">No emoji for “{q.trim()}” — try another word.</p>}
+          </div>
         </div>
       )}
 
