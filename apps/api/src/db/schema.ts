@@ -273,6 +273,8 @@ export const icons = pgTable(
     name: text('name').notNull(),
     /** Source domain for fetched favicons; null for uploads. */
     domain: text('domain'),
+    /** Where the image was downloaded from (a pinned catalog logo is re-fetched when this changes). */
+    sourceUrl: text('source_url'),
     storageKey: text('storage_key').notNull(),
     mimeType: text('mime_type').notNull(),
     sizeBytes: integer('size_bytes').notNull(),
