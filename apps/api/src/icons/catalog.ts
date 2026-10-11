@@ -61,7 +61,8 @@ export const ICON_CATALOG: { name: string; domain: string; category: string; ico
   { name: 'Splunk', domain: 'splunk.com', category: 'Network & Security' },
   // Hardware
   { name: 'Dell', domain: 'dell.com', category: 'Hardware' },
-  { name: 'HPE', domain: 'hpe.com', category: 'Hardware' },
+  // hpe.com never answers non-browser requests, so pin the official logo.
+  { name: 'HPE', domain: 'hpe.com', category: 'Hardware', iconUrl: COMMONS + 'Hewlett_Packard_Enterprise_logo.svg' },
   { name: 'HP', domain: 'hp.com', category: 'Hardware' },
   { name: 'Lenovo', domain: 'lenovo.com', category: 'Hardware' },
   { name: 'NetApp', domain: 'netapp.com', category: 'Hardware' },

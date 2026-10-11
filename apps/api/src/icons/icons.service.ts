@@ -59,12 +59,22 @@ export function iconCandidates(html: string, base: URL): Candidate[] {
 export class IconsService {
   private readonly logger = new Logger(IconsService.name);
   private inFlight = new Map<string, Promise<string>>();
-  /** Domains whose last fetch found nothing (so the picker stops waiting); retried after an hour. */
+  /** Domains whose last fetch found nothing, with when — the picker shows a letter tile for them. */
   private failed = new Map<string, number>();
 
-  hasFailed(domain: string) {
+  /**
+   * loading = a fetch is running; failed = the last fetch found nothing; new = not tried since start-up.
+   * A failed domain stays failed (never back to a spinner) until a new fetch actually starts.
+   */
+  fetchState(domain: string): 'loading' | 'failed' | 'new' {
+    if (this.inFlight.has(domain)) return 'loading';
+    return this.failed.has(domain) ? 'failed' : 'new';
+  }
+
+  /** Failed more than an hour ago — worth another automatic try. */
+  retryDue(domain: string) {
     const at = this.failed.get(domain);
-    return !!at && Date.now() - at < 3_600_000;
+    return !!at && Date.now() - at > 3_600_000;
   }
 
   constructor(
@@ -117,13 +127,18 @@ export class IconsService {
     const existing = await this.findByDomain(domain);
     if (existing) return existing.id;
 
-    // A pinned official logo wins over whatever the website advertises.
-    const candidates: Candidate[] = iconUrl ? [{ url: iconUrl, score: 100_000 }] : [];
+    // A pinned official logo wins over whatever the website advertises — try it before the (possibly
+    // slow or bot-blocked) website.
+    if (iconUrl) {
+      const img = await this.tryImage(iconUrl);
+      if (img) return this.store(domain, name, img, userId);
+    }
+    const candidates: Candidate[] = [];
     for (const origin of [`https://${domain}`, `https://www.${domain}`]) {
       try {
         const page = await safeFetch(origin, { maxBytes: 1024 * 1024, timeoutMs: 8000, accept: 'text/html' });
         candidates.push(...iconCandidates(page.buffer.toString('utf8'), page.finalUrl));
-        if (candidates.length > (iconUrl ? 1 : 0)) break;
+        if (candidates.length) break;
       } catch {
         /* try the next origin */
       }
@@ -137,18 +152,21 @@ export class IconsService {
 
     for (const c of candidates) {
       const img = await this.tryImage(c.url);
-      if (!img) continue;
-      const storageKey = await this.storage.put(img.buffer);
-      const [row] = await this.db
-        .insert(icons)
-        .values({ name, domain, storageKey, mimeType: img.mime, sizeBytes: img.buffer.length, createdById: userId })
-        .onConflictDoNothing()
-        .returning({ id: icons.id });
-      if (row) return row.id;
-      return (await this.findByDomain(domain))!.id;
+      if (img) return this.store(domain, name, img, userId);
     }
     this.logger.warn(`No usable icon found for ${domain}`);
     throw new BadRequestException(`Couldn't find an icon on ${domain}`);
+  }
+
+  private async store(domain: string, name: string, img: { buffer: Buffer; mime: string }, userId?: string) {
+    const storageKey = await this.storage.put(img.buffer);
+    const [row] = await this.db
+      .insert(icons)
+      .values({ name, domain, storageKey, mimeType: img.mime, sizeBytes: img.buffer.length, createdById: userId })
+      .onConflictDoNothing()
+      .returning({ id: icons.id });
+    if (row) return row.id;
+    return (await this.findByDomain(domain))!.id;
   }
 
   async upload(name: string, buffer: Buffer, mime: string, userId: string) {
