@@ -79,8 +79,20 @@ export const useProvisionStatus = (poll: boolean) =>
 export function useStartProvision() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<EntraProvisionStatus>('/settings/entra/provision', { method: 'POST' }),
+    mutationFn: (publicUrl: string) => api<EntraProvisionStatus>('/settings/entra/provision', { method: 'POST', json: { publicUrl } }),
     onSuccess: (data) => qc.setQueryData(['entra-provision'], data),
+  });
+}
+
+export function useDisconnectEntra() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ ok: boolean; message: string }>('/settings/entra/disconnect', { method: 'POST' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings'] });
+      qc.invalidateQueries({ queryKey: ['entra-provision'] });
+      qc.invalidateQueries({ queryKey: ['directory-status'] });
+    },
   });
 }
 

@@ -150,8 +150,4 @@ export class SettingsService {
   appUrl(): string {
     return this.config.get<string>('APP_URL') ?? 'http://localhost:3000';
   }
-
-  async entraRedirectUri(): Promise<string> {
-    return (await this.get('entra')).redirectUri || `${this.appUrl()}/api/auth/entra/callback`;
-  }
 }

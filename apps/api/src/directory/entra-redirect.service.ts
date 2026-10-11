@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import type { EntraSignInStatus } from '@trigon/shared';
 import type { Request } from 'express';
 import { SettingsService } from '../settings/settings.service';
@@ -95,6 +95,25 @@ export class EntraRedirectService implements OnApplicationBootstrap {
     // then lives there), since Microsoft won't redirect back to http.
     if (!redirectAllowed(`${origin}${ENTRA_CALLBACK_PATH}`)) origin = trusted.find((o) => o.startsWith('https://')) ?? origin;
     return { redirectUri: `${origin}${ENTRA_CALLBACK_PATH}`, origin };
+  }
+
+  /**
+   * Validate the public address an admin confirmed in "Connect to Microsoft" and put it first in the
+   * trusted list. Only https:// is accepted (http://localhost for development).
+   */
+  async confirmOrigin(publicUrl: string): Promise<string> {
+    let origin: string;
+    try {
+      origin = new URL(publicUrl.trim()).origin;
+    } catch {
+      throw new BadRequestException('Enter the full address, e.g. https://trigon.example.com');
+    }
+    if (!redirectAllowed(`${origin}${ENTRA_CALLBACK_PATH}`)) {
+      throw new BadRequestException('Microsoft only accepts HTTPS addresses for sign-in. Enter the https:// address people use to open Trigon.');
+    }
+    const current = (await this.settings.get('entra')).signInOrigins ?? [];
+    await this.settings.update('entra', { signInOrigins: [origin, ...current.filter((o) => o !== origin)].slice(0, MAX_ORIGINS) });
+    return origin;
   }
 
   /** Remember the HTTPS address an admin is using, so Microsoft sign-in works there too. */

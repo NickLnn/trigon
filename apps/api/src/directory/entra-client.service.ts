@@ -80,6 +80,19 @@ export class EntraClientService {
     if (!res.ok) throw new Error(`Graph ${res.status}: ${await res.text()}`);
   }
 
+  /** DELETE a Graph object with the app token; false when it was already gone. */
+  async graphDelete(path: string): Promise<boolean> {
+    const token = await EntraClientService.appToken(await this.client());
+    const res = await fetch(`${GRAPH}${path}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (res.status === 404) return false;
+    if (!res.ok) throw new Error(`Graph ${res.status}: ${await res.text()}`);
+    return true;
+  }
+
   /** One page of a Graph collection (for pickers / search). */
   async graphPage<T>(path: string): Promise<T[]> {
     const token = await EntraClientService.appToken(await this.client());

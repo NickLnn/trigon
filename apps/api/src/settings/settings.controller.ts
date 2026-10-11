@@ -58,6 +58,11 @@ function assertCron(expr: string) {
   }
 }
 
+class ProvisionDto {
+  /** The HTTPS address people open Trigon at, confirmed by the admin. */
+  @IsString() @MaxLength(300) publicUrl: string;
+}
+
 @Controller('settings')
 @Roles('admin')
 export class SettingsController {
@@ -72,15 +77,16 @@ export class SettingsController {
   @Get()
   async all(): Promise<AllSettings> {
     const appUrl = this.settings.appUrl();
+    const signIn = await this.redirects.ensure();
     return {
       general: await this.settings.getPublic('general'),
       entra: await this.settings.getPublic('entra'),
       ldap: await this.settings.getPublic('ldap'),
       info: {
         appUrl,
-        entraRedirectUri: await this.settings.entraRedirectUri(),
+        entraRedirectUri: signIn.redirectUris[0] ?? '',
         httpsWarning: !appUrl.startsWith('https://') && !appUrl.includes('localhost'),
-        entraSignIn: await this.redirects.ensure(),
+        entraSignIn: signIn,
       },
     };
   }
@@ -169,8 +175,14 @@ export class SettingsController {
 
   @Post('entra/provision')
   @HttpCode(200)
-  provision(@CurrentUser() user: AuthUser) {
-    return this.provisioner.start(user.id);
+  provision(@CurrentUser() user: AuthUser, @Body() dto: ProvisionDto) {
+    return this.provisioner.start(user.id, dto.publicUrl);
+  }
+
+  @Post('entra/disconnect')
+  @HttpCode(200)
+  disconnect(@CurrentUser() user: AuthUser) {
+    return this.provisioner.disconnect(user.id);
   }
 
   @Get('entra/provision')

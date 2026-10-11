@@ -1,7 +1,7 @@
 import { PublicClientApplication } from '@azure/msal-node';
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import type { EntraProvisionStatus } from '@trigon/shared';
-import { GRAPH } from '../directory/entra-client.service';
+import { EntraClientService, GRAPH } from '../directory/entra-client.service';
 import { EntraRedirectService } from '../directory/entra-redirect.service';
 import { SettingsService } from './settings.service';
 
@@ -63,6 +63,7 @@ export class EntraProvisionerService {
   constructor(
     private readonly settings: SettingsService,
     private readonly redirects: EntraRedirectService,
+    private readonly entra: EntraClientService,
   ) {}
 
   current(): EntraProvisionStatus {
@@ -73,11 +74,18 @@ export class EntraProvisionerService {
     this.status = { ...this.status, steps: this.status.steps.map((s, i) => ({ ...s, done: i <= index })) };
   }
 
-  /** Starts the device-code flow; resolves once Microsoft has issued the user code. */
-  async start(userId: string): Promise<EntraProvisionStatus> {
-    if (this.status.state === 'waiting_for_sign_in' || this.status.state === 'working') {
-      throw new ConflictException('A Microsoft connection is already in progress');
-    }
+  private busy() {
+    return this.status.state === 'waiting_for_sign_in' || this.status.state === 'working';
+  }
+
+  /**
+   * Starts the device-code flow; resolves once Microsoft has issued the user code. `publicUrl` is the
+   * HTTPS address the admin confirmed — the sign-in redirect is registered for it (never for the
+   * internal LAN address).
+   */
+  async start(userId: string, publicUrl: string): Promise<EntraProvisionStatus> {
+    if (this.busy()) throw new ConflictException('A Microsoft connection is already in progress');
+    await this.redirects.confirmOrigin(publicUrl);
     this.status = { state: 'waiting_for_sign_in', steps: STEPS.map((label) => ({ label, done: false })) };
 
     const pca = new PublicClientApplication({
@@ -116,6 +124,41 @@ export class EntraProvisionerService {
 
     await codeIssued;
     return this.status;
+  }
+
+  /**
+   * Disconnect: delete the app registration Trigon created (it owns itself, so its own token may) and
+   * clear the stored connection, so "Connect to Microsoft" starts from scratch.
+   */
+  async disconnect(userId: string): Promise<{ ok: boolean; message: string }> {
+    if (this.busy()) throw new ConflictException('A Microsoft connection is in progress');
+    const s = await this.settings.get('entra');
+    let message = 'Disconnected from Microsoft.';
+    if (s.provisionedAppId && s.provisionedAppId === s.clientId && (await this.entra.enabled())) {
+      try {
+        const deleted = await this.entra.graphDelete(`/applications(appId='${s.provisionedAppId}')`);
+        message = deleted
+          ? 'Disconnected. The "Trigon" app registration was deleted from your Microsoft tenant.'
+          : 'Disconnected. The "Trigon" app registration was already gone from your Microsoft tenant.';
+      } catch (err) {
+        // AADSTS700016: the application no longer exists in the tenant (deleted in the portal).
+        if (/AADSTS700016/.test((err as Error).message)) {
+          message = 'Disconnected. The "Trigon" app registration was already gone from your Microsoft tenant.';
+        } else {
+          this.logger.warn(`Could not delete the Entra app registration: ${(err as Error).message}`);
+          message = 'Disconnected in Trigon, but the "Trigon" app registration could not be deleted automatically. Remove it under Microsoft Entra ID → App registrations if you no longer need it.';
+        }
+      }
+    } else if (s.clientId) {
+      message = 'Disconnected. This app registration was not created by Trigon, so it was left in your Microsoft tenant.';
+    }
+    await this.settings.update(
+      'entra',
+      { enabled: false, tenantId: '', clientId: '', clientSecret: null as unknown as string, provisionedAppId: null, syncGroups: [], syncUsers: [] },
+      userId,
+    );
+    this.status = { state: 'idle', steps: STEPS.map((label) => ({ label, done: false })) };
+    return { ok: true, message };
   }
 
   private async graph<T>(token: string, method: string, path: string, body?: unknown): Promise<T> {
