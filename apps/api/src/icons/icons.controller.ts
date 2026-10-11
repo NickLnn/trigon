@@ -55,7 +55,7 @@ export class IconsController {
     return ICON_CATALOG.map(({ iconUrl: _pinned, ...c }) => ({
       ...c,
       iconId: byDomain.get(c.domain) ?? null,
-      failed: !byDomain.has(c.domain) && this.icons.hasFailed(c.domain),
+      failed: !byDomain.has(c.domain) && this.icons.fetchState(c.domain) === 'failed',
     }));
   }
 
@@ -63,7 +63,8 @@ export class IconsController {
   @Post('catalog/warm')
   async warm(@CurrentUser() user: AuthUser) {
     const catalog = await this.catalog();
-    const missing = catalog.filter((c) => !c.iconId && !c.failed);
+    // Never tried since start-up, or failed long enough ago to try again.
+    const missing = catalog.filter((c) => !c.iconId && (this.icons.fetchState(c.domain) === 'new' || this.icons.retryDue(c.domain)));
     const pinned = new Map(ICON_CATALOG.map((c) => [c.domain, c.iconUrl]));
     void (async () => {
       for (let i = 0; i < missing.length; i += 6) {

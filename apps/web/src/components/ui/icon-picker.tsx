@@ -41,8 +41,10 @@ export function IconPicker({
   });
   const custom = useQuery({ queryKey: ['icons'], queryFn: () => api<IconInfo[]>('/icons'), enabled: open });
 
+  // Once per opening: the server fetches whatever is missing (and retries old failures).
   useEffect(() => {
-    if (open && catalog.data?.some((c) => !c.iconId && !c.failed) && !warmed.current) {
+    if (!open) warmed.current = false;
+    else if (catalog.data?.some((c) => !c.iconId) && !warmed.current) {
       warmed.current = true;
       api('/icons/catalog/warm', { method: 'POST' }).catch(() => undefined);
     }
