@@ -13,7 +13,7 @@ class BackupSettingsDto {
   @IsBoolean() enabled: boolean;
   @IsString() @MaxLength(100) schedule: string;
   @IsInt() @Min(1) @Max(365) keep: number;
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(4) @IsIn(BACKUP_DESTINATIONS as unknown as string[], { each: true }) destinations: BackupDestination[];
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(3) @IsIn(BACKUP_DESTINATIONS as unknown as string[], { each: true }) destinations: BackupDestination[];
   @IsString() @MaxLength(300) localPath: string;
   @IsString() @MaxLength(255) nfsServer: string;
   @IsString() @MaxLength(500) nfsExport: string;
@@ -23,14 +23,6 @@ class BackupSettingsDto {
   @IsString() @MaxLength(255) smbUser: string;
   @IsString() @MaxLength(255) smbDomain: string;
   @IsOptional() @IsString() @MaxLength(500) smbPassword?: string;
-  @IsString() @MaxLength(300) gdriveClientId: string;
-  @IsOptional() @IsString() @MaxLength(300) gdriveClientSecret?: string;
-  @IsString() @MaxLength(200) gdriveFolderName: string;
-}
-
-class GdriveConnectDto {
-  @IsOptional() @IsString() @MaxLength(300) clientId?: string;
-  @IsOptional() @IsString() @MaxLength(300) clientSecret?: string;
 }
 
 class RestoreDto {
@@ -96,25 +88,6 @@ export class BackupsController {
   async remove(@CurrentUser() user: AuthUser, @Param('name') name: string) {
     await this.backups.remove(name, user.id);
     return { ok: true };
-  }
-
-  /** Google Drive: save the OAuth client and start the device sign-in (the pop-up then polls GET). */
-  @Post('gdrive/connect')
-  @HttpCode(200)
-  gdriveConnect(@CurrentUser() user: AuthUser, @Body() dto: GdriveConnectDto) {
-    return this.backups.gdriveStart(user.id, dto.clientId, dto.clientSecret);
-  }
-
-  @Get('gdrive/connect')
-  gdriveStatus() {
-    return this.backups.gdriveStatus();
-  }
-
-  @Post('gdrive/disconnect')
-  @HttpCode(200)
-  async gdriveDisconnect(@CurrentUser() user: AuthUser) {
-    await this.backups.gdriveDisconnect(user.id);
-    return this.backups.overview();
   }
 
   /** Restore runs to completion before answering; Trigon restarts right after. */

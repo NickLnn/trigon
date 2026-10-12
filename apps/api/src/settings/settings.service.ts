@@ -22,7 +22,7 @@ const SECRET_FIELDS: { [K in SettingsKey]: (keyof SettingsMap[K])[] } = {
   entra: ['clientSecret'],
   ldap: ['bindPassword'],
   email: ['smtpPassword'],
-  backup: ['smbPassword', 'gdriveClientSecret', 'gdriveRefreshToken'],
+  backup: ['smbPassword'],
 };
 
 /**
@@ -114,12 +114,6 @@ export class SettingsService {
         smbUser: '',
         smbDomain: '',
         smbPassword: '',
-        gdriveClientId: '',
-        gdriveClientSecret: '',
-        gdriveFolderName: 'Trigon Backups',
-        gdriveFolderId: null,
-        gdriveAccount: null,
-        gdriveRefreshToken: '',
         lastRun: null,
       },
       ldap: {
