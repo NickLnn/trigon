@@ -94,7 +94,7 @@ export class AdminController {
     const user = await this.identity.createLocal(dto.email.trim(), dto.displayName.trim(), await hash(dto.password));
     if (dto.role !== user.role) await this.db.update(users).set({ role: dto.role }).where(eq(users.id, user.id));
     this.activity.record({ action: 'user.created', actorId: me.id, target: { type: 'user', id: user.id, name: user.displayName }, details: { email: user.email, role: dto.role } });
-    this.notifications.account(user.id, me.id, { kind: 'created', role: dto.role });
+    this.notifications.account(user.id, me.id, { kind: 'created', role: dto.role, email: user.email });
     return { id: user.id };
   }
 

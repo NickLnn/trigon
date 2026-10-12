@@ -1,11 +1,13 @@
 'use client';
 
 import type { EmailProvider, EmailSettings } from '@trigon/shared';
-import { Check, Copy, Mail, Send, Server, Sparkles } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Check, Copy, Eye, Mail, Send, Server, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
 import { useEmailMicrosoftStatus, useEmailTest, useSaveSettings, useSettings } from '@/lib/admin-queries';
+import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
 const PROVIDERS: { value: EmailProvider; label: string; hint: string; icon: ReactNode }[] = [
@@ -64,6 +66,7 @@ export default function EmailSettingsPage() {
   const [to, setTo] = useState('');
   const entraConnected = !!data && data.entra.enabled && !!data.entra.clientId && !!data.entra.hasClientSecret;
   const ms = useEmailMicrosoftStatus(entraConnected && form?.provider === 'microsoft');
+  const previews = useQuery({ queryKey: ['email-previews'], queryFn: () => api<{ kind: string; label: string }[]>('/settings/email/previews') });
 
   useEffect(() => {
     if (data) setForm({ ...data.email, smtpPassword: '' });
@@ -244,6 +247,22 @@ export default function EmailSettingsPage() {
           </div>
         </SettingsCard>
       )}
+
+      <SettingsCard title="Preview the emails" description="Every email Trigon can send, with sample data. Opens in a new tab; nothing is sent.">
+        <div className="flex flex-wrap gap-1.5">
+          {previews.data?.map((p) => (
+            <a
+              key={p.kind}
+              href={`/api/settings/email/preview/${p.kind}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="press inline-flex items-center gap-1.5 rounded-pill bg-surface-2 px-3 py-1.5 text-meta font-semibold text-ink-2 hover:bg-surface-3"
+            >
+              <Eye className="size-3.5" /> {p.label}
+            </a>
+          ))}
+        </div>
+      </SettingsCard>
 
       {save.error && <Result result={{ ok: false, message: save.error.message }} />}
       {save.isSuccess && !save.isPending && <Result result={{ ok: true, message: 'Saved.' }} />}
