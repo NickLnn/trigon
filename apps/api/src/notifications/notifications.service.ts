@@ -1,31 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs, type PermissionLevel, type SystemRole } from '@trigon/shared';
+import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs, type PermissionLevel } from '@trigon/shared';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Database, InjectDb } from '../db/db.module';
 import { displayStatus } from '../documents/documents.controller';
 import { documents, groupMembers, groups, spaces, users } from '../db/schema';
-import { EmailService, type OutgoingEmail } from '../email/email.service';
+import { EmailService } from '../email/email.service';
+import type { EmailContent } from '../email/template';
 import { SettingsService } from '../settings/settings.service';
+import { accountEmail, digestEmail, shareEmail, type AccountChange, type DigestPage } from './messages';
 
 /** A whole group gets at most this many emails for one share; bigger groups are skipped (and logged). */
 const MAX_SHARE_RECIPIENTS = 300;
 
-const LEVEL_TEXT: Record<PermissionLevel, string> = {
-  view: 'view',
-  comment: 'view and comment on',
-  edit: 'edit',
-  manage: 'manage',
-};
-
 export const prefsOf = (stored: Partial<NotificationPrefs> | null | undefined): NotificationPrefs => ({ ...DEFAULT_NOTIFICATION_PREFS, ...(stored ?? {}) });
 
-export type AccountChange =
-  | { kind: 'created'; role: SystemRole }
-  | { kind: 'role'; from: SystemRole; to: SystemRole }
-  | { kind: 'deactivated' }
-  | { kind: 'reactivated' }
-  | { kind: 'password' };
+export type { AccountChange };
 
 /** Is a weekly digest due on this date (Mondays)? */
 export const weeklyDue = (d: Date) => d.getUTCDay() === 1;
@@ -82,16 +72,11 @@ export class NotificationsService {
       if (!recipientIds.length) return;
 
       const base = await this.settings.publicUrl();
-      /** Short name for the subject line, long one (with the space) for the body. */
-      let name: string;
-      let what: string;
-      let url: string;
+      let item: Parameters<typeof shareEmail>[0]['item'];
       if (input.resourceType === 'space') {
-        const [s] = await this.db.select({ name: spaces.name }).from(spaces).where(eq(spaces.id, input.resourceId));
-        if (!s) return;
-        name = `the space “${s.name}”`;
-        what = name;
-        url = `${base}/spaces/${input.resourceId}`;
+        const [sp] = await this.db.select({ name: spaces.name }).from(spaces).where(eq(spaces.id, input.resourceId));
+        if (!sp) return;
+        item = { kind: 'space', id: input.resourceId, title: sp.name, space: null };
       } else {
         const [d] = await this.db
           .select({ title: documents.title, kind: documents.kind, space: spaces.name })
@@ -99,22 +84,18 @@ export class NotificationsService {
           .innerJoin(spaces, eq(spaces.id, documents.spaceId))
           .where(eq(documents.id, input.resourceId));
         if (!d) return;
-        name = `the ${d.kind} “${d.title}”`;
-        what = `${name} in ${d.space}`;
-        url = `${base}/d/${input.resourceId}`;
+        item = { kind: d.kind, id: input.resourceId, title: d.title, space: d.space };
       }
-      const actor = await this.displayName(input.actorId);
-      const changed = !!input.previousLevel;
-      const subject = changed ? `Your access to ${name} changed` : `${actor} shared ${name} with you`;
-      const text = [
-        changed
-          ? `${actor} changed your access to ${what}: you can now ${LEVEL_TEXT[input.level]} it (before: ${LEVEL_TEXT[input.previousLevel!]}).`
-          : `${actor} shared ${what} with you. You can ${LEVEL_TEXT[input.level]} it.`,
-        via ? `You have this access because you are a member of “${via}”.` : '',
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-      await this.sendTo(recipientIds, 'shares', () => ({ subject, text, action: { label: 'Open in Trigon', url } }));
+      const [actor] = await this.db.select({ name: users.displayName, email: users.email }).from(users).where(eq(users.id, input.actorId));
+      const content = shareEmail({
+        base,
+        actor: { name: actor?.name ?? 'Someone', email: actor?.email ?? null },
+        item,
+        level: input.level,
+        previousLevel: input.previousLevel,
+        group: via,
+      });
+      await this.sendTo(recipientIds, 'shares', content);
     });
   }
 
@@ -123,29 +104,10 @@ export class NotificationsService {
     this.run('Account', async () => {
       if (!(await this.email.enabled())) return;
       const base = await this.settings.publicUrl();
-      const actor = await this.displayName(actorId);
-      const msg: Pick<OutgoingEmail, 'subject' | 'text'> = (() => {
-        switch (change.kind) {
-          case 'created':
-            return {
-              subject: 'Your Trigon account is ready',
-              text: `${actor} created a Trigon account for you (role: ${change.role}).\n\nSign in with this email address. Your administrator gives you the password separately — Trigon never sends passwords by email.`,
-            };
-          case 'role':
-            return { subject: 'Your Trigon role changed', text: `${actor} changed your role from ${change.from} to ${change.to}.` };
-          case 'deactivated':
-            return { subject: 'Your Trigon account was deactivated', text: `${actor} deactivated your Trigon account. You have been signed out and can't sign in until it is reactivated.` };
-          case 'reactivated':
-            return { subject: 'Your Trigon account was reactivated', text: `${actor} reactivated your Trigon account. You can sign in again.` };
-          case 'password':
-            return {
-              subject: 'Your Trigon password was changed',
-              text: `${actor} set a new password for your Trigon account and signed you out everywhere.\n\nIf you didn't expect this, contact your administrator.`,
-            };
-        }
-      })();
+      const [person] = await this.db.select({ name: users.displayName }).from(users).where(eq(users.id, userId));
+      const content = accountEmail({ base, actor: await this.displayName(actorId), name: person?.name ?? '', change, at: new Date() });
       // Security-relevant: a deactivated person still hears about it.
-      await this.sendTo([userId], 'account', () => ({ ...msg, action: { label: 'Open Trigon', url: base } }), change.kind === 'deactivated');
+      await this.sendTo([userId], 'account', content, change.kind === 'deactivated');
     });
   }
 
@@ -155,57 +117,47 @@ export class NotificationsService {
     if (!(await this.email.enabled())) return;
     const owner = sql<string>`coalesce(${documents.ownerId}, ${documents.createdById})`;
     const rows = await this.db
-      .select({ owner, id: documents.id, title: documents.title, status: displayStatus, space: spaces.name })
+      .select({
+        owner,
+        id: documents.id,
+        title: documents.title,
+        status: displayStatus,
+        space: spaces.name,
+        since: sql<string>`case when ${documents.status} = 'verified' then ${documents.verifiedAt} else ${documents.updatedAt} end`,
+      })
       .from(documents)
       .innerJoin(spaces, eq(spaces.id, documents.spaceId))
       .where(and(isNull(documents.deletedAt), eq(documents.kind, 'page'), sql`${displayStatus} in ('stale', 'draft')`, sql`${owner} is not null`))
-      .orderBy(documents.title);
-    const byOwner = new Map<string, typeof rows>();
-    for (const r of rows) byOwner.set(r.owner, [...(byOwner.get(r.owner) ?? []), r]);
+      .orderBy(sql`case when ${documents.status} = 'verified' then ${documents.verifiedAt} else ${documents.updatedAt} end`);
+    const byOwner = new Map<string, DigestPage[]>();
+    for (const r of rows) {
+      const page: DigestPage = { id: r.id, title: r.title, space: r.space, status: r.status as DigestPage['status'], since: new Date(r.since) };
+      byOwner.set(r.owner, [...(byOwner.get(r.owner) ?? []), page]);
+    }
     if (!byOwner.size) return;
 
     const base = await this.settings.publicUrl();
-    const due = (p: NotificationPrefs) => p.reviewDigest === 'daily' || (p.reviewDigest === 'weekly' && weeklyDue(now));
     const people = await this.db
-      .select({ id: users.id, email: users.email, prefs: users.notificationPrefs })
+      .select({ id: users.id, name: users.displayName, email: users.email, prefs: users.notificationPrefs })
       .from(users)
       .where(and(inArray(users.id, [...byOwner.keys()]), eq(users.active, true)));
     for (const person of people) {
-      if (!person.email || !due(prefsOf(person.prefs))) continue;
-      const pages = byOwner.get(person.id)!;
-      const stale = pages.filter((p) => p.status === 'stale');
-      const drafts = pages.filter((p) => p.status === 'draft');
-      const list = (ps: typeof pages) =>
-        ps
-          .slice(0, 25)
-          .map((p) => `• ${p.title} (${p.space})\n  ${base}/d/${p.id}`)
-          .join('\n') + (ps.length > 25 ? `\n…and ${ps.length - 25} more` : '');
-      const text = [
-        `You own ${pages.length} page${pages.length === 1 ? '' : 's'} that need${pages.length === 1 ? 's' : ''} attention.`,
-        stale.length ? `Needs review — verified too long ago:\n${list(stale)}` : '',
-        drafts.length ? `Drafts waiting to be verified:\n${list(drafts)}` : '',
-        'You can change how often you get this email in Trigon under Profile → Notifications.',
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-      this.email.notify({
-        to: person.email,
-        subject: `${pages.length} page${pages.length === 1 ? '' : 's'} to review in Trigon`,
-        text,
-        action: { label: 'Open the review list', url: `${base}/review` },
-      });
+      const { reviewDigest } = prefsOf(person.prefs);
+      const due = reviewDigest === 'daily' || (reviewDigest === 'weekly' && weeklyDue(now));
+      if (!person.email || !due) continue;
+      const content = digestEmail({ base, name: person.name, pages: byOwner.get(person.id)!, now, frequency: reviewDigest as 'daily' | 'weekly' });
+      this.email.notify({ ...content, to: person.email });
     }
   }
 
   /** Email each recipient who wants this kind of message. */
-  private async sendTo(userIds: string[], kind: 'shares' | 'account', build: () => Omit<OutgoingEmail, 'to'>, includeInactive = false) {
+  private async sendTo(userIds: string[], kind: 'shares' | 'account', content: EmailContent, includeInactive = false) {
     const people = await this.db
       .select({ email: users.email, prefs: users.notificationPrefs })
       .from(users)
       .where(and(inArray(users.id, userIds), includeInactive ? undefined : eq(users.active, true)));
-    const mail = build();
     for (const p of people) {
-      if (p.email && prefsOf(p.prefs)[kind]) this.email.notify({ ...mail, to: p.email });
+      if (p.email && prefsOf(p.prefs)[kind]) this.email.notify({ ...content, to: p.email });
     }
   }
 }

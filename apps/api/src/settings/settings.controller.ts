@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, HttpCode, NotFoundException, Param, Post, Put, Query } from '@nestjs/common';
 import type { AllSettings, DirectoryPick, EmailMicrosoftStatus, EmailSettings, EntraSettings, LdapSettings } from '@trigon/shared';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
@@ -9,6 +9,7 @@ import { EntraClientService, GRAPH } from '../directory/entra-client.service';
 import { EntraRedirectService } from '../directory/entra-redirect.service';
 import { LdapService } from '../directory/ldap.service';
 import { EmailService } from '../email/email.service';
+import { EMAIL_PREVIEWS, previewHtml } from '../email/previews';
 import { EntraProvisionerService } from './entra-provisioner.service';
 import { SettingsService } from './settings.service';
 
@@ -161,6 +162,20 @@ export class SettingsController {
   async emailTest(@Body() dto: EmailTestDto) {
     const { to, ...form } = dto;
     return this.email.test(form as EmailSettings, to);
+  }
+
+  /** The sample emails an admin can preview (made-up data, nothing is sent). */
+  @Get('email/previews')
+  emailPreviews() {
+    return Object.entries(EMAIL_PREVIEWS).map(([kind, p]) => ({ kind, label: p.label }));
+  }
+
+  @Get('email/preview/:kind')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  async emailPreview(@Param('kind') kind: string) {
+    const html = previewHtml(kind, await this.settings.publicUrl());
+    if (!html) throw new NotFoundException();
+    return html;
   }
 
   /** Whether the Entra app may send mail (Mail.Send). */
