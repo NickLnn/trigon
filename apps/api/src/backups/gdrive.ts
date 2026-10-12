@@ -11,9 +11,9 @@ import { BACKUP_NAME, type Destination, type StoredFile } from './destinations';
  * created itself, never the rest of the Drive. openid + email only tell us which account was connected.
  */
 export const GDRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.file', 'openid', 'email'];
-export const GDRIVE_CALLBACK = '/api/backups/gdrive/callback';
 const FOLDER = 'application/vnd.google-apps.folder';
 const API = 'https://www.googleapis.com/drive/v3';
+const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 
 async function googleError(res: Response, what: string): Promise<Error> {
   const text = await res.text();
@@ -25,43 +25,76 @@ async function googleError(res: Response, what: string): Promise<Error> {
     /* not JSON */
   }
   if (/invalid_grant/.test(text)) {
-    return new Error('Google Drive: access was revoked or has expired — connect Google Drive again. (If this happens every 7 days, set the OAuth consent screen\'s publishing status to "In production".)');
+    return new Error('Google Drive: access was revoked or has expired — connect Google Drive again. (If this happens every 7 days, publish the app: Google Auth Platform → Audience → Publish app.)');
   }
   return new Error(`Google Drive: ${what} failed (${res.status}): ${msg}`);
 }
 
-export function authUrl(clientId: string, redirectUri: string, state: string) {
-  const p = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: GDRIVE_SCOPES.join(' '),
-    access_type: 'offline',
-    prompt: 'consent',
-    include_granted_scopes: 'true',
-    state,
-  });
-  return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;
+export interface DeviceCode {
+  deviceCode: string;
+  userCode: string;
+  verificationUrl: string;
+  expiresIn: number;
+  interval: number;
 }
 
-/** Authorization code → refresh token + the account's email. */
-export async function exchangeCode(clientId: string, clientSecret: string, code: string, redirectUri: string) {
-  const res = await fetch('https://oauth2.googleapis.com/token', {
+/**
+ * Google's sign-in for devices ("TVs and Limited Input devices" OAuth client): Trigon shows a short code,
+ * the admin enters it at google.com/device. No redirect address, so it works over plain http on the LAN.
+ */
+export async function deviceCode(clientId: string): Promise<DeviceCode> {
+  const res = await fetch('https://oauth2.googleapis.com/device/code', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri, grant_type: 'authorization_code' }),
+    body: new URLSearchParams({ client_id: clientId, scope: GDRIVE_SCOPES.join(' ') }),
     signal: AbortSignal.timeout(30_000),
   });
-  if (!res.ok) throw await googleError(res, 'sign-in');
-  const body = (await res.json()) as { refresh_token?: string; access_token: string; id_token?: string };
-  if (!body.refresh_token) throw new Error('Google did not return a refresh token. Remove Trigon under myaccount.google.com → Security → Third-party access and connect again.');
-  let email: string | null = null;
-  try {
-    email = (JSON.parse(Buffer.from(body.id_token!.split('.')[1], 'base64url').toString()) as { email?: string }).email ?? null;
-  } catch {
-    /* no id token */
+  if (!res.ok) {
+    const bad = res.status === 401 || res.status === 400;
+    const err = await googleError(res, 'starting the sign-in');
+    if (bad && /invalid_client|unauthorized_client|client type|client_id/i.test(err.message + res.statusText)) {
+      throw new Error('Google Drive: Google does not accept this client ID for device sign-in. Create the OAuth client with application type "TVs and Limited Input devices".');
+    }
+    throw err;
   }
-  return { refreshToken: body.refresh_token, accessToken: body.access_token, email };
+  const b = (await res.json()) as { device_code: string; user_code: string; verification_url: string; expires_in: number; interval?: number };
+  return { deviceCode: b.device_code, userCode: b.user_code, verificationUrl: b.verification_url, expiresIn: b.expires_in, interval: b.interval ?? 5 };
+}
+
+/** Wait until the admin has approved the code; returns a refresh token and the account's email. */
+export async function pollDeviceToken(clientId: string, clientSecret: string, code: DeviceCode, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))) {
+  let interval = code.interval;
+  const until = Date.now() + code.expiresIn * 1000;
+  while (Date.now() < until) {
+    await sleep(interval * 1000);
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, device_code: code.deviceCode, grant_type: DEVICE_GRANT }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = (await res.json().catch(() => ({}))) as { error?: string; refresh_token?: string; access_token?: string; id_token?: string };
+    if (res.ok && body.access_token) {
+      if (!body.refresh_token) throw new Error('Google did not return a refresh token. Remove Trigon under myaccount.google.com → Security → Third-party connections and connect again.');
+      let email: string | null = null;
+      try {
+        email = (JSON.parse(Buffer.from(body.id_token!.split('.')[1], 'base64url').toString()) as { email?: string }).email ?? null;
+      } catch {
+        /* no id token */
+      }
+      return { refreshToken: body.refresh_token, accessToken: body.access_token, email };
+    }
+    if (body.error === 'authorization_pending') continue;
+    if (body.error === 'slow_down') {
+      interval += 5;
+      continue;
+    }
+    if (body.error === 'access_denied') throw new Error('The Google sign-in was declined.');
+    if (body.error === 'expired_token') break;
+    if (body.error === 'invalid_client') throw new Error('Google Drive: the client secret is wrong.');
+    throw new Error(`Google Drive: sign-in failed (${body.error ?? res.status}).`);
+  }
+  throw new Error('The code expired before it was entered. Start again.');
 }
 
 export async function accessToken(clientId: string, clientSecret: string, refreshToken: string) {

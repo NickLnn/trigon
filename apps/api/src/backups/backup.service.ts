@@ -1,15 +1,14 @@
 import { BadRequestException, ConflictException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import type { BackupDestination, BackupDestinationStatus, BackupFile, BackupOverview, BackupRunResult, BackupSettings } from '@trigon/shared';
+import type { BackupDestination, BackupDestinationStatus, BackupFile, BackupOverview, BackupRunResult, BackupSettings, GdriveConnectStatus } from '@trigon/shared';
 import { CronJob } from 'cron';
-import { randomBytes } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ActivityService } from '../activity/activity.service';
 import { SettingsService } from '../settings/settings.service';
 import { BACKUP_NAME, destinationFor, nfsCompose, normalizeSmb, run, selectedDestinations, type Destination } from './destinations';
-import { accessToken, authUrl, ensureFolder, exchangeCode, GDRIVE_CALLBACK, revoke } from './gdrive';
+import { accessToken, deviceCode, ensureFolder, pollDeviceToken, revoke, type DeviceCode } from './gdrive';
 
 const JOB = 'trigon-backup';
 const FORMAT = 1;
@@ -34,6 +33,8 @@ export function parseBackupName(name: string): Pick<BackupFile, 'name' | 'create
 
 const DEST_ORDER: BackupDestination[] = ['local', 'nfs', 'smb', 'gdrive'];
 
+const GDRIVE_STEPS = ['Sign in with Google', 'Create the backup folder in your Drive', 'Save the connection in Trigon'];
+
 /**
  * Backups of everything Trigon stores: one .tar.gz with a PostgreSQL dump (pg_dump custom format) and the
  * uploaded files, copied to every selected destination (this server, SMB, NFS, Google Drive). Runs on a
@@ -43,8 +44,7 @@ const DEST_ORDER: BackupDestination[] = ['local', 'nfs', 'smb', 'gdrive'];
 export class BackupService implements OnModuleInit {
   private readonly logger = new Logger(BackupService.name);
   private running: BackupOverview['running'] = null;
-  /** OAuth "state" → who started connecting Google Drive and from which address. */
-  private readonly gdriveStates = new Map<string, { userId: string; origin: string; until: number }>();
+  private gdrive: GdriveConnectStatus = { state: 'idle', steps: GDRIVE_STEPS.map((label) => ({ label, done: false })) };
 
   constructor(
     private readonly settings: SettingsService,
@@ -334,50 +334,71 @@ export class BackupService implements OnModuleInit {
     }
   }
 
-  // ─── Google Drive connection ───
+  // ─── Google Drive connection (device sign-in: a code entered at google.com/device) ───
 
-  /** Step 1: the Google consent URL. `origin` is the address the admin is using (must be HTTPS or localhost). */
-  async gdriveConnect(userId: string, origin: string) {
-    const s = await this.settings.get('backup');
-    if (!s.gdriveClientId || !s.gdriveClientSecret) throw new BadRequestException('Save the OAuth client ID and secret first.');
-    const url = new URL(origin);
-    if (url.protocol !== 'https:' && url.hostname !== 'localhost') {
-      throw new BadRequestException('Google only sends you back to an https:// address (or localhost). Open Trigon at its HTTPS address to connect Google Drive.');
-    }
-    for (const [k, v] of this.gdriveStates) if (v.until < Date.now()) this.gdriveStates.delete(k);
-    const state = randomBytes(24).toString('base64url');
-    this.gdriveStates.set(state, { userId, origin: url.origin, until: Date.now() + 10 * 60_000 });
-    return { url: authUrl(s.gdriveClientId, `${url.origin}${GDRIVE_CALLBACK}`, state) };
+  gdriveStatus(): GdriveConnectStatus {
+    return this.gdrive;
   }
 
-  /** Step 2: Google redirects back with a code; store the refresh token and create/find the folder. */
-  async gdriveCallback(query: { code?: string; state?: string; error?: string }): Promise<string> {
-    const pending = query.state ? this.gdriveStates.get(query.state) : undefined;
-    if (!pending || pending.until < Date.now()) throw new BadRequestException('This Google sign-in link has expired. Start "Connect Google Drive" again.');
-    this.gdriveStates.delete(query.state!);
-    const back = `${pending.origin}/settings/backups`;
-    if (query.error || !query.code) return `${back}?gdrive=error&message=${encodeURIComponent(query.error === 'access_denied' ? 'Google sign-in was cancelled.' : (query.error ?? 'No code'))}`;
-    try {
-      const s = await this.settings.get('backup');
-      const { refreshToken, accessToken: token, email } = await exchangeCode(s.gdriveClientId, s.gdriveClientSecret ?? '', query.code, `${pending.origin}${GDRIVE_CALLBACK}`);
-      const folderName = s.gdriveFolderName || 'Trigon Backups';
-      const folderId = await ensureFolder(token, folderName);
-      const destinations = [...new Set([...selectedDestinations(s), 'gdrive' as const])];
-      await this.settings.update('backup', { gdriveRefreshToken: refreshToken, gdriveAccount: email, gdriveFolderId: folderId, gdriveFolderName: folderName, destinations }, pending.userId);
-      this.activity.record({ action: 'settings.updated', actorId: pending.userId, target: { type: 'settings', id: null, name: 'Backups' }, details: { fields: ['Google Drive connected'] } });
-      return `${back}?gdrive=connected`;
-    } catch (err) {
-      return `${back}?gdrive=error&message=${encodeURIComponent((err as Error).message)}`;
+  private gdriveStep(index: number) {
+    this.gdrive = { ...this.gdrive, steps: this.gdrive.steps.map((st, i) => ({ ...st, done: i <= index })) };
+  }
+
+  /** Save the OAuth client (when given), ask Google for a code, and finish in the background once it is approved. */
+  async gdriveStart(userId: string, clientId?: string, clientSecret?: string): Promise<GdriveConnectStatus> {
+    if (this.gdrive.state === 'waiting_for_sign_in' || this.gdrive.state === 'working') return this.gdrive;
+    if (clientId || clientSecret) {
+      const patch: Partial<BackupSettings> = {};
+      if (clientId) patch.gdriveClientId = clientId.trim();
+      if (clientSecret) patch.gdriveClientSecret = clientSecret.trim();
+      await this.settings.update('backup', patch, userId);
     }
+    const s = await this.settings.get('backup');
+    if (!s.gdriveClientId || !s.gdriveClientSecret) throw new BadRequestException('Enter the client ID and client secret from Google Cloud Console.');
+    this.gdrive = { state: 'waiting_for_sign_in', steps: GDRIVE_STEPS.map((label) => ({ label, done: false })) };
+    let code: DeviceCode;
+    try {
+      code = await deviceCode(s.gdriveClientId);
+    } catch (err) {
+      this.gdrive = { ...this.gdrive, state: 'error', message: (err as Error).message };
+      return this.gdrive;
+    }
+    this.gdrive = {
+      ...this.gdrive,
+      userCode: code.userCode,
+      verificationUrl: code.verificationUrl,
+      expiresAt: new Date(Date.now() + code.expiresIn * 1000).toISOString(),
+    };
+    void (async () => {
+      try {
+        const { refreshToken, accessToken: token, email } = await pollDeviceToken(s.gdriveClientId, s.gdriveClientSecret ?? '', code);
+        this.gdrive = { ...this.gdrive, state: 'working', userCode: undefined };
+        this.gdriveStep(0);
+        const folderName = s.gdriveFolderName || 'Trigon Backups';
+        const folderId = await ensureFolder(token, folderName);
+        this.gdriveStep(1);
+        const current = await this.settings.get('backup');
+        const destinations = [...new Set([...selectedDestinations(current), 'gdrive' as const])];
+        await this.settings.update('backup', { gdriveRefreshToken: refreshToken, gdriveAccount: email, gdriveFolderId: folderId, gdriveFolderName: folderName, destinations }, userId);
+        this.gdriveStep(2);
+        this.activity.record({ action: 'settings.updated', actorId: userId, target: { type: 'settings', id: null, name: 'Backups' }, details: { fields: ['Google Drive connected'] } });
+        this.gdrive = { ...this.gdrive, state: 'done', message: `Connected${email ? ` as ${email}` : ''}. Backups go to My Drive › ${folderName}.` };
+      } catch (err) {
+        this.gdrive = { ...this.gdrive, state: 'error', userCode: undefined, message: (err as Error).message };
+      }
+    })();
+    return this.gdrive;
   }
 
   async gdriveDisconnect(userId: string) {
     const s = await this.settings.get('backup');
     if (s.gdriveRefreshToken) await revoke(s.gdriveRefreshToken);
+    const remaining = selectedDestinations(s).filter((d) => d !== 'gdrive');
     await this.settings.update(
       'backup',
-      { gdriveRefreshToken: null as unknown as string, gdriveAccount: null, gdriveFolderId: null, destinations: selectedDestinations(s).filter((d) => d !== 'gdrive') },
+      { gdriveRefreshToken: null as unknown as string, gdriveAccount: null, gdriveFolderId: null, destinations: remaining.length ? remaining : ['local'] },
       userId,
     );
+    this.gdrive = { state: 'idle', steps: GDRIVE_STEPS.map((label) => ({ label, done: false })) };
   }
 }
