@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { EntraSettings, GeneralSettings, LdapSettings } from '@trigon/shared';
+import type { EmailSettings, EntraSettings, GeneralSettings, LdapSettings } from '@trigon/shared';
 import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -11,6 +11,7 @@ export interface SettingsMap {
   general: GeneralSettings;
   entra: EntraSettings;
   ldap: LdapSettings;
+  email: EmailSettings;
 }
 export type SettingsKey = keyof SettingsMap;
 
@@ -19,6 +20,7 @@ const SECRET_FIELDS: { [K in SettingsKey]: (keyof SettingsMap[K])[] } = {
   general: [],
   entra: ['clientSecret'],
   ldap: ['bindPassword'],
+  email: ['smtpPassword'],
 };
 
 /**
@@ -78,6 +80,18 @@ export class SettingsService {
         syncScope: 'all',
         syncGroups: [],
         syncUsers: [],
+        mailSend: false,
+      },
+      email: {
+        provider: (['smtp', 'microsoft'].includes(env('EMAIL_PROVIDER')) ? env('EMAIL_PROVIDER') : 'none') as EmailSettings['provider'],
+        fromAddress: env('EMAIL_FROM'),
+        fromName: env('EMAIL_FROM_NAME', 'Trigon'),
+        smtpHost: env('SMTP_HOST'),
+        smtpPort: Number(env('SMTP_PORT', '587')),
+        smtpSecurity: (['tls', 'none'].includes(env('SMTP_SECURITY')) ? env('SMTP_SECURITY') : 'starttls') as EmailSettings['smtpSecurity'],
+        smtpUser: env('SMTP_USER'),
+        smtpPassword: env('SMTP_PASSWORD'),
+        smtpTlsRejectUnauthorized: env('SMTP_TLS_REJECT_UNAUTHORIZED', 'true') !== 'false',
       },
       ldap: {
         enabled: env('LDAP_ENABLED') === 'true',

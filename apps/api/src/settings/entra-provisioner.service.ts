@@ -22,6 +22,8 @@ const SETUP_SCOPES = [
  * Trigon add new sign-in redirect addresses to its own registration later, without an admin.
  */
 const APP_ROLES = ['User.Read.All', 'Group.Read.All', 'GroupMember.Read.All', 'Application.ReadWrite.OwnedBy'];
+/** Only when the admin opts in to sending email through Exchange Online. */
+const MAIL_ROLE = 'Mail.Send';
 const DELEGATED_SCOPES = ['openid', 'profile', 'email', 'offline_access', 'User.Read'];
 
 const STEPS = [
@@ -83,7 +85,7 @@ export class EntraProvisionerService {
    * HTTPS address the admin confirmed — the sign-in redirect is registered for it (never for the
    * internal LAN address).
    */
-  async start(userId: string, publicUrl: string): Promise<EntraProvisionStatus> {
+  async start(userId: string, publicUrl: string, mail = false): Promise<EntraProvisionStatus> {
     if (this.busy()) throw new ConflictException('A Microsoft connection is already in progress');
     await this.redirects.confirmOrigin(publicUrl);
     this.status = { state: 'waiting_for_sign_in', steps: STEPS.map((label) => ({ label, done: false })) };
@@ -113,8 +115,14 @@ export class EntraProvisionerService {
         if (!result?.accessToken) throw new Error('Sign-in did not return a token');
         this.step(0);
         this.status = { ...this.status, state: 'working', userCode: undefined };
-        await this.provision(result.accessToken, result.tenantId, userId);
-        this.status = { ...this.status, state: 'done', message: this.status.message ?? 'Microsoft Entra ID is connected.' };
+        await this.provision(result.accessToken, result.tenantId, userId, mail);
+        this.status = {
+          ...this.status,
+          state: 'done',
+          message:
+            this.status.message ??
+            (mail ? 'Microsoft Entra ID is connected and Trigon may send email through Exchange Online.' : 'Microsoft Entra ID is connected.'),
+        };
       })
       .catch((err: Error) => {
         this.logger.error(`Entra provisioning failed: ${err.message}`);
@@ -154,7 +162,7 @@ export class EntraProvisionerService {
     }
     await this.settings.update(
       'entra',
-      { enabled: false, tenantId: '', clientId: '', clientSecret: null as unknown as string, provisionedAppId: null, syncGroups: [], syncUsers: [] },
+      { enabled: false, tenantId: '', clientId: '', clientSecret: null as unknown as string, provisionedAppId: null, syncGroups: [], syncUsers: [], mailSend: false },
       userId,
     );
     this.status = { state: 'idle', steps: STEPS.map((label) => ({ label, done: false })) };
@@ -191,7 +199,7 @@ export class EntraProvisionerService {
     }
   }
 
-  private async provision(token: string, tenantId: string, userId: string) {
+  private async provision(token: string, tenantId: string, userId: string, mail: boolean) {
     // Every address Trigon is known to be reachable at over HTTPS (or localhost).
     const redirectUris = await this.redirects.wanted();
     const graphSp = await this.graph<GraphSp>(
@@ -199,11 +207,13 @@ export class EntraProvisionerService {
       'GET',
       `/servicePrincipals(appId='${MS_GRAPH_APP_ID}')?$select=id,appRoles,oauth2PermissionScopes`,
     );
-    const roleIds = APP_ROLES.map((v) => {
+    const roleId = (v: string) => {
       const role = graphSp.appRoles.find((r) => r.value === v);
       if (!role) throw new Error(`Graph app role ${v} not found`);
       return role.id;
-    });
+    };
+    const roleIds = (mail ? [...APP_ROLES, MAIL_ROLE] : APP_ROLES).map(roleId);
+    const mailRoleId = roleId(MAIL_ROLE);
     const scopeIds = DELEGATED_SCOPES.map((v) => {
       const scope = graphSp.oauth2PermissionScopes.find((s) => s.value === v);
       if (!scope) throw new Error(`Graph scope ${v} not found`);
@@ -261,7 +271,7 @@ export class EntraProvisionerService {
         });
     this.step(2);
 
-    const assigned = await this.graph<{ value: { appRoleId: string; resourceId: string }[] }>(
+    const assigned = await this.graph<{ value: { id: string; appRoleId: string; resourceId: string }[] }>(
       token,
       'GET',
       `/servicePrincipals/${sp.id}/appRoleAssignments`,
@@ -273,6 +283,12 @@ export class EntraProvisionerService {
         resourceId: graphSp.id,
         appRoleId,
       });
+    }
+    // Declined this time: take Mail.Send away again if an earlier connection granted it.
+    if (!mail) {
+      for (const a of assigned.value.filter((x) => x.appRoleId === mailRoleId && x.resourceId === graphSp.id)) {
+        await this.graph(token, 'DELETE', `/servicePrincipals/${graphSp.id}/appRoleAssignedTo/${a.id}`);
+      }
     }
     const grants = await this.graph<{ value: { id: string }[] }>(
       token,
@@ -296,7 +312,7 @@ export class EntraProvisionerService {
     await this.settings.update(
       'entra',
       existing
-        ? { enabled: true, tenantId, clientId: app.appId, clientSecret: secret?.secretText, provisionedAppId: app.appId }
+        ? { enabled: true, tenantId, clientId: app.appId, clientSecret: secret?.secretText, provisionedAppId: app.appId, mailSend: mail }
         : {
             enabled: true,
             tenantId,
@@ -307,6 +323,7 @@ export class EntraProvisionerService {
             syncScope: 'selected',
             syncGroups: [],
             syncUsers: [],
+            mailSend: mail,
           },
       userId,
     );
