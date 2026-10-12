@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import type { DocumentNode, SpaceStats, SpaceSummary } from '@trigon/shared';
+import { compareNodes, type DocumentNode, type SpaceStats, type SpaceSummary } from '@trigon/shared';
 import { IsHexColor, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
@@ -68,7 +68,7 @@ export function buildTree(rows: DocumentNode[]): DocumentNode[] {
     (parent ? parent.children! : roots).push(node);
   }
   const sort = (list: DocumentNode[]) => {
-    list.sort((a, b) => a.position - b.position || a.title.localeCompare(b.title));
+    list.sort(compareNodes);
     list.forEach((n) => n.children && sort(n.children));
   };
   sort(roots);

@@ -11,7 +11,8 @@ import { importFiles } from '@/lib/importer';
 import { findPath, useMoveDocument, useTree } from '@/lib/queries';
 import { NodeActions } from './node-actions';
 
-type Zone = 'before' | 'inside' | 'after';
+/** 'inside' nests under the row; 'beside' (file rows) lands next to it, in the same parent. Order is always alphabetical. */
+type Zone = 'inside' | 'beside';
 
 /** What is being dragged (dataTransfer can't be read during dragover, so keep it here). */
 let dragging: { id: string; spaceId: string; blocked: Set<string> } | null = null;
@@ -61,14 +62,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
   const isFolder = node.kind === 'folder';
   const zone = hover?.id === node.id ? hover.zone : null;
 
-  const zoneFor = (e: DragEvent): Zone => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const y = (e.clientY - rect.top) / rect.height;
-    if (node.kind === 'file') return y < 0.5 ? 'before' : 'after';
-    if (y < 0.28) return 'before';
-    if (y > 0.72) return 'after';
-    return 'inside';
-  };
+  const zoneFor = (): Zone => (node.kind === 'file' ? 'beside' : 'inside');
 
   const dnd = {
     draggable: canEdit,
@@ -87,7 +81,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = files ? 'copy' : 'move';
-      const z = zoneFor(e);
+      const z = zoneFor();
       if (hover?.id !== node.id || hover.zone !== z) setHover({ id: node.id, zone: z });
     },
     onDragLeave: (e: DragEvent) => {
@@ -96,7 +90,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
     onDrop: (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      onDrop(node, siblings, zoneFor(e), e);
+      onDrop(node, siblings, zoneFor(), e);
       setHover(null);
     },
   };
@@ -124,11 +118,8 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
   const cls = `relative flex w-full items-center gap-1.5 rounded-lg py-1 pr-8 text-[0.875rem] ${
     zone === 'inside' ? 'bg-navy-3 text-white ring-2 ring-accent' : active ? 'bg-navy-3 font-medium text-white' : 'text-navy-ink-2 hover:bg-navy-2 hover:text-white'
   }`;
-  const indicator = zone === 'before' || zone === 'after' ? (
-    <span
-      className="pointer-events-none absolute right-1 h-0.5 rounded-full bg-accent"
-      style={{ left: 12 + depth * 18, [zone === 'before' ? 'top' : 'bottom']: -1 }}
-    />
+  const indicator = zone === 'beside' ? (
+    <span className="pointer-events-none absolute inset-0 rounded-lg ring-1 ring-accent/60" />
   ) : null;
 
   return (
@@ -178,18 +169,6 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
   );
 }
 
-/** Position between neighbours so only the moved row is written. */
-function positionFor(target: DocumentNode, siblings: DocumentNode[], zone: 'before' | 'after', movingId: string) {
-  const list = siblings.filter((s) => s.id !== movingId);
-  const i = list.findIndex((s) => s.id === target.id);
-  if (zone === 'before') {
-    const prev = list[i - 1];
-    return prev ? (prev.position + target.position) / 2 : target.position - 1;
-  }
-  const next = list[i + 1];
-  return next ? (target.position + next.position) / 2 : target.position + 1;
-}
-
 /** Desktop sidebar tree for one space, with drag & drop; auto-expands to reveal the open document. */
 export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: string; activeId?: string; canEdit?: boolean }) {
   const qc = useQueryClient();
@@ -234,10 +213,8 @@ export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: stri
     }
     if (!dragging || dragging.blocked.has(target.id)) return;
     const id = dragging.id;
-    const position =
-      zone === 'inside'
-        ? Math.max(0, ...(target.children ?? []).filter((c) => c.id !== id).map((c) => c.position)) + 1
-        : positionFor(target, siblings, zone, id);
+    const dest = zone === 'inside' ? (target.children ?? []) : siblings;
+    const position = Math.max(0, ...dest.filter((c) => c.id !== id).map((c) => c.position)) + 1;
     if (zone === 'inside') setOpenIds((s) => new Set([...s, target.id]));
     move.mutate({ id, spaceId, parentId, position });
   };
