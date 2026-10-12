@@ -3,6 +3,7 @@ import type { AllSettings, DirectoryPick, EntraSettings, LdapSettings } from '@t
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
 import { CronJob } from 'cron';
+import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { EntraClientService, GRAPH } from '../directory/entra-client.service';
 import { EntraRedirectService } from '../directory/entra-redirect.service';
@@ -72,7 +73,18 @@ export class SettingsController {
     private readonly provisioner: EntraProvisionerService,
     private readonly entraClient: EntraClientService,
     private readonly redirects: EntraRedirectService,
+    private readonly activity: ActivityService,
   ) {}
+
+  /** Only which fields were saved is logged, never their values (they include secrets). */
+  private recordSave(userId: string, section: string, dto: object) {
+    this.activity.record({
+      action: 'settings.updated',
+      actorId: userId,
+      target: { type: 'settings', id: null, name: section },
+      details: { fields: Object.keys(dto) },
+    });
+  }
 
   @Get()
   async all(): Promise<AllSettings> {
@@ -94,6 +106,7 @@ export class SettingsController {
   @Put('general')
   async general(@CurrentUser() user: AuthUser, @Body() dto: GeneralDto) {
     await this.settings.update('general', dto, user.id);
+    this.recordSave(user.id, 'General', dto);
     return this.settings.getPublic('general');
   }
 
@@ -101,6 +114,7 @@ export class SettingsController {
   async entra(@CurrentUser() user: AuthUser, @Body() dto: EntraDto) {
     assertCron(dto.syncCron);
     await this.settings.update('entra', dto as Partial<EntraSettings>, user.id);
+    this.recordSave(user.id, 'Microsoft Entra ID', dto);
     return this.settings.getPublic('entra');
   }
 
@@ -108,6 +122,7 @@ export class SettingsController {
   async ldapSave(@CurrentUser() user: AuthUser, @Body() dto: LdapDto) {
     assertCron(dto.syncCron);
     await this.settings.update('ldap', dto as Partial<LdapSettings>, user.id);
+    this.recordSave(user.id, 'LDAP / Active Directory', dto);
     return this.settings.getPublic('ldap');
   }
 
@@ -115,6 +130,7 @@ export class SettingsController {
   @Put('entra/scope')
   async entraScope(@CurrentUser() user: AuthUser, @Body() dto: EntraScopeDto) {
     await this.settings.update('entra', dto as Partial<EntraSettings>, user.id);
+    this.recordSave(user.id, 'Microsoft Entra ID (sync scope)', dto);
     return this.settings.getPublic('entra');
   }
 

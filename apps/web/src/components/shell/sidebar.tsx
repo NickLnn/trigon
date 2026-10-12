@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import type { HealthStats, SpaceSummary } from '@trigon/shared';
-import { CircleCheck, Home, LayoutGrid, Plus, Search, Settings } from 'lucide-react';
+import { Activity, CircleCheck, Home, LayoutGrid, Plus, Search, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -109,9 +109,14 @@ export function Sidebar() {
           <LayoutGrid className="size-[1.125rem]" /> All spaces
         </Link>
         {user?.role === 'admin' && (
-          <Link href="/settings" className={navItem(pathname.startsWith('/settings'))}>
-            <Settings className="size-[1.125rem]" /> Settings
-          </Link>
+          <>
+            <Link href="/activity" className={navItem(pathname.startsWith('/activity'))}>
+              <Activity className="size-[1.125rem]" /> Activity
+            </Link>
+            <Link href="/settings" className={navItem(pathname.startsWith('/settings'))}>
+              <Settings className="size-[1.125rem]" /> Settings
+            </Link>
+          </>
         )}
       </nav>
 

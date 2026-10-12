@@ -18,6 +18,7 @@ import { IsOptional, IsString, IsUUID, IsUrl, MaxLength } from 'class-validator'
 import { and, eq, isNull, max } from 'drizzle-orm';
 import type { Response } from 'express';
 import { isTextFile } from '@trigon/shared';
+import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { safeFetch } from '../common/ssrf';
 import { Database, InjectDb } from '../db/db.module';
@@ -57,6 +58,7 @@ export class FilesController {
     @InjectDb() private readonly db: Database,
     private readonly perms: PermissionsService,
     private readonly storage: StorageService,
+    private readonly activity: ActivityService,
   ) {}
 
   /** Upload a .docx / .pdf / any file as a node in the space tree. */
@@ -90,6 +92,13 @@ export class FilesController {
         updatedById: user.id,
       })
       .returning({ id: documents.id, title: documents.title, mimeType: documents.mimeType });
+    this.activity.record({
+      action: 'file.uploaded',
+      actorId: user.id,
+      spaceId: dto.spaceId,
+      target: { type: 'file', id: doc.id, name: doc.title },
+      details: { sizeBytes: file.size, mimeType: file.mimetype },
+    });
     return doc;
   }
 
@@ -126,6 +135,7 @@ export class FilesController {
       .set({ storageKey, sizeBytes: data.length, textContent: dto.content.slice(0, 1_000_000), updatedById: user.id })
       .where(eq(documents.id, documentId));
     await this.storage.remove(doc.storageKey);
+    this.activity.noteEdit(user.id, documentId, 'file.edited');
     return { ok: true, sizeBytes: data.length };
   }
 

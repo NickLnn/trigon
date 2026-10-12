@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, Download, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
+import { Activity, ChevronRight, Download, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
 import { OPEN_INSTALL_EVENT } from '@/components/ui/install-prompt';
 import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -80,6 +80,7 @@ export default function ProfilePage() {
 
         {user.role === 'admin' && (
           <Group title="Administration">
+            <Row icon={<Activity className="size-4" />} label="Activity" value="Who changed or shared what" onClick={() => router.push('/activity')} />
             <Row icon={<Settings className="size-4" />} label="Settings" value="Entra, LDAP, users, groups" onClick={() => router.push('/settings')} />
           </Group>
         )}

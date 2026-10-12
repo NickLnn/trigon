@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import { requestContextMiddleware } from './activity/request-context';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -15,6 +16,7 @@ async function bootstrap() {
   app.set('trust proxy', 1);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
   app.use(cookieParser());
+  app.use(requestContextMiddleware);
   // Imported pages (long scripts, big tables) easily exceed the 100 KB default.
   app.useBodyParser('json', { limit: '10mb' });
   app.enableCors({ origin: config.get('APP_URL') ?? 'http://localhost:3000', credentials: true });

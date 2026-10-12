@@ -300,6 +300,38 @@ export const settings = pgTable('settings', {
     .$onUpdate(() => new Date()),
 });
 
+/**
+ * Audit log for the Activity explorer. Names are copied at write time so the history stays readable
+ * after people, spaces or pages are renamed or deleted (hence no foreign keys except the actor).
+ */
+export const activity = pgTable(
+  'activity',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+    actorId: uuid('actor_id').references(() => users.id, { onDelete: 'set null' }),
+    actorName: text('actor_name'),
+    actorEmail: text('actor_email'),
+    action: text('action').notNull(),
+    category: text('category').notNull(),
+    spaceId: uuid('space_id'),
+    spaceName: text('space_name'),
+    targetType: text('target_type'),
+    targetId: uuid('target_id'),
+    targetName: text('target_name'),
+    details: jsonb('details').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+  },
+  (t) => [
+    index('activity_at_idx').on(t.at),
+    index('activity_actor_idx').on(t.actorId, t.at),
+    index('activity_space_idx').on(t.spaceId, t.at),
+    index('activity_target_idx').on(t.targetId, t.at),
+    index('activity_category_idx').on(t.category, t.at),
+  ],
+);
+
 export const usersRelations = relations(users, ({ many }) => ({
   accounts: many(accounts),
   memberships: many(groupMembers),

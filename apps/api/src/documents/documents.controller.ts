@@ -15,6 +15,7 @@ import { DOC_STATUSES, PAGE_TYPES, type DisplayStatus, type HealthStats } from '
 import { ArrayMaxSize, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { and, asc, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { documents, spaces, users } from '../db/schema';
@@ -158,7 +159,15 @@ export class DocumentsController {
   constructor(
     @InjectDb() private readonly db: Database,
     private readonly perms: PermissionsService,
+    private readonly activity: ActivityService,
   ) {}
+
+  /** Title of a folder/page a document is moved into, or the space root. */
+  private async parentName(parentId: string | null) {
+    if (!parentId) return 'Space root';
+    const [p] = await this.db.select({ title: documents.title }).from(documents).where(eq(documents.id, parentId));
+    return p?.title ?? 'Unknown';
+  }
 
   @Post()
   async create(@CurrentUser() user: AuthUser, @Body() dto: CreateDocumentDto) {
@@ -191,6 +200,13 @@ export class DocumentsController {
         updatedById: user.id,
       })
       .returning({ id: documents.id, title: documents.title, kind: documents.kind });
+    this.activity.record({
+      action: 'item.created',
+      actorId: user.id,
+      spaceId: dto.spaceId,
+      target: { type: doc.kind, id: doc.id, name: doc.title },
+      details: { location: await this.parentName(dto.parentId ?? null) },
+    });
     return doc;
   }
 
@@ -228,6 +244,13 @@ export class DocumentsController {
         updatedById: user.id,
       })
       .returning({ id: documents.id, title: documents.title });
+    this.activity.record({
+      action: 'item.imported',
+      actorId: user.id,
+      spaceId: dto.spaceId,
+      target: { type: 'page', id: doc.id, name: doc.title },
+      details: { location: await this.parentName(dto.parentId ?? null) },
+    });
     return doc;
   }
 
@@ -415,11 +438,13 @@ export class DocumentsController {
         ) SELECT 1 FROM up WHERE id = ${id} LIMIT 1`);
       if (cycle.rows.length) throw new BadRequestException('Cannot move a folder into its own descendant');
     }
+    const [before] = await this.db.select().from(documents).where(eq(documents.id, id));
     const [doc] = await this.db
       .update(documents)
       .set({ ...dto, updatedById: user.id })
       .where(eq(documents.id, id))
       .returning({ id: documents.id, title: documents.title, parentId: documents.parentId, position: documents.position });
+    await this.recordUpdate(user, before, dto);
     return doc;
   }
 
@@ -443,7 +468,12 @@ export class DocumentsController {
   @Post(':id/verify')
   async verify(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     await this.perms.assertDocument(user, id, 'edit');
-    await this.db.update(documents).set({ status: 'verified', verifiedAt: new Date(), verifiedById: user.id }).where(eq(documents.id, id));
+    const [doc] = await this.db
+      .update(documents)
+      .set({ status: 'verified', verifiedAt: new Date(), verifiedById: user.id })
+      .where(eq(documents.id, id))
+      .returning({ spaceId: documents.spaceId, title: documents.title, kind: documents.kind });
+    this.activity.record({ action: 'page.verified', actorId: user.id, spaceId: doc.spaceId, target: { type: doc.kind, id, name: doc.title } });
     return { ok: true };
   }
 
@@ -451,12 +481,49 @@ export class DocumentsController {
   @Delete(':id')
   async remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     await this.perms.assertDocument(user, id, 'edit');
-    await this.db.execute(sql`
+    const [doc] = await this.db
+      .select({ spaceId: documents.spaceId, title: documents.title, kind: documents.kind, parentId: documents.parentId })
+      .from(documents)
+      .where(eq(documents.id, id));
+    const result = await this.db.execute(sql`
       WITH RECURSIVE sub AS (
         SELECT id FROM ${documents} WHERE id = ${id}
         UNION ALL SELECT d.id FROM ${documents} d JOIN sub ON d.parent_id = sub.id
       )
-      UPDATE ${documents} SET deleted_at = now() WHERE id IN (SELECT id FROM sub)`);
+      UPDATE ${documents} SET deleted_at = now() WHERE id IN (SELECT id FROM sub) AND deleted_at IS NULL`);
+    this.activity.record({
+      action: 'item.deleted',
+      actorId: user.id,
+      spaceId: doc.spaceId,
+      target: { type: doc.kind, id, name: doc.title },
+      details: { location: await this.parentName(doc.parentId), itemsDeleted: result.rowCount ?? 1 },
+    });
     return { ok: true };
+  }
+
+  /** Rename, move and property changes become separate, readable activity entries. Reordering alone isn't logged. */
+  private async recordUpdate(user: AuthUser, before: typeof documents.$inferSelect, dto: UpdateDocumentDto) {
+    const base = { actorId: user.id, spaceId: before.spaceId };
+    const target = { type: before.kind, id: before.id, name: dto.title ?? before.title };
+    if (dto.title !== undefined && dto.title !== before.title) {
+      this.activity.record({ ...base, action: 'item.renamed', target, details: { from: before.title, to: dto.title } });
+    }
+    if (dto.parentId !== undefined && dto.parentId !== before.parentId) {
+      const [from, to] = await Promise.all([this.parentName(before.parentId), this.parentName(dto.parentId)]);
+      this.activity.record({ ...base, action: 'item.moved', target, details: { from, to } });
+    }
+    const person = async (uid: string | null | undefined) => {
+      if (!uid) return null;
+      const [u] = await this.db.select({ name: users.displayName }).from(users).where(eq(users.id, uid));
+      return u?.name ?? 'Unknown';
+    };
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const f of ['icon', 'pageType', 'status', 'tags', 'reviewIntervalDays'] as const) {
+      if (dto[f] !== undefined && JSON.stringify(dto[f]) !== JSON.stringify(before[f])) changes[f] = { from: before[f], to: dto[f] };
+    }
+    if (dto.ownerId !== undefined && dto.ownerId !== before.ownerId) {
+      changes.owner = { from: await person(before.ownerId), to: await person(dto.ownerId) };
+    }
+    if (Object.keys(changes).length) this.activity.record({ ...base, action: 'item.updated', target, details: { changes } });
   }
 }

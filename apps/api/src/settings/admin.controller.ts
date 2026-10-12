@@ -17,6 +17,7 @@ import { hash } from '@node-rs/argon2';
 import type { AdminGroup, AdminUser, AuthProvider, SystemRole } from '@trigon/shared';
 import { IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { and, asc, count, desc, eq, ilike, isNull, ne, or, sql } from 'drizzle-orm';
+import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { accounts, groupMembers, groups, refreshTokens, users } from '../db/schema';
@@ -55,6 +56,7 @@ export class AdminController {
   constructor(
     @InjectDb() private readonly db: Database,
     private readonly identity: IdentityService,
+    private readonly activity: ActivityService,
   ) {}
 
   @Get('users')
@@ -85,10 +87,11 @@ export class AdminController {
   }
 
   @Post('users')
-  async createUser(@Body() dto: CreateUserDto) {
+  async createUser(@CurrentUser() me: AuthUser, @Body() dto: CreateUserDto) {
     if (await this.identity.findUserByEmail(dto.email)) throw new ConflictException('A user with this email already exists');
     const user = await this.identity.createLocal(dto.email.trim(), dto.displayName.trim(), await hash(dto.password));
     if (dto.role !== user.role) await this.db.update(users).set({ role: dto.role }).where(eq(users.id, user.id));
+    this.activity.record({ action: 'user.created', actorId: me.id, target: { type: 'user', id: user.id, name: user.displayName }, details: { email: user.email, role: dto.role } });
     return { id: user.id };
   }
 
@@ -111,7 +114,16 @@ export class AdminController {
       }
       if (id === me.id && dto.active === false) throw new ForbiddenException('You cannot deactivate yourself');
     }
+    const [before] = await this.db.select().from(users).where(eq(users.id, id));
+    if (!before) throw new NotFoundException();
     await this.db.update(users).set(dto).where(eq(users.id, id));
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const f of ['role', 'active', 'displayName'] as const) {
+      if (dto[f] !== undefined && dto[f] !== before[f]) changes[f] = { from: before[f], to: dto[f] };
+    }
+    if (Object.keys(changes).length) {
+      this.activity.record({ action: 'user.updated', actorId: me.id, target: { type: 'user', id, name: before.displayName }, details: { changes } });
+    }
     if (dto.active === false) {
       // Sign the user out everywhere.
       await this.db.update(refreshTokens).set({ revokedAt: new Date() }).where(and(eq(refreshTokens.userId, id), isNull(refreshTokens.revokedAt)));
@@ -121,7 +133,7 @@ export class AdminController {
 
   /** Set (or create) the local password for a user, e.g. a directory user who also needs local login. */
   @Post('users/:id/password')
-  async setPassword(@Param('id', ParseUUIDPipe) id: string, @Body() dto: PasswordDto) {
+  async setPassword(@CurrentUser() me: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: PasswordDto) {
     const [user] = await this.db.select().from(users).where(eq(users.id, id));
     if (!user) throw new NotFoundException();
     const passwordHash = await hash(dto.password);
@@ -129,6 +141,7 @@ export class AdminController {
     if (local) await this.db.update(accounts).set({ passwordHash }).where(eq(accounts.id, local.id));
     else await this.db.insert(accounts).values({ userId: id, provider: 'local', providerAccountId: user.email.toLowerCase(), passwordHash });
     await this.db.update(refreshTokens).set({ revokedAt: new Date() }).where(and(eq(refreshTokens.userId, id), isNull(refreshTokens.revokedAt)));
+    this.activity.record({ action: 'user.password_set', actorId: me.id, target: { type: 'user', id, name: user.displayName } });
     return { ok: true };
   }
 
@@ -151,8 +164,9 @@ export class AdminController {
   }
 
   @Post('groups')
-  async createGroup(@Body() dto: GroupDto) {
+  async createGroup(@CurrentUser() me: AuthUser, @Body() dto: GroupDto) {
     const [g] = await this.db.insert(groups).values({ ...dto, source: 'local' }).returning({ id: groups.id });
+    this.activity.record({ action: 'group.created', actorId: me.id, target: { type: 'group', id: g.id, name: dto.name } });
     return g;
   }
 
@@ -164,9 +178,10 @@ export class AdminController {
   }
 
   @Delete('groups/:id')
-  async deleteGroup(@Param('id', ParseUUIDPipe) id: string) {
-    await this.localGroup(id);
+  async deleteGroup(@CurrentUser() me: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    const g = await this.localGroup(id);
     await this.db.delete(groups).where(eq(groups.id, id));
+    this.activity.record({ action: 'group.deleted', actorId: me.id, target: { type: 'group', id, name: g.name } });
     return { ok: true };
   }
 
@@ -181,16 +196,25 @@ export class AdminController {
   }
 
   @Post('groups/:id/members')
-  async addMember(@Param('id', ParseUUIDPipe) id: string, @Body() dto: MemberDto) {
-    await this.localGroup(id);
-    await this.db.insert(groupMembers).values({ groupId: id, userId: dto.userId }).onConflictDoNothing();
+  async addMember(@CurrentUser() me: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: MemberDto) {
+    const g = await this.localGroup(id);
+    const added = await this.db.insert(groupMembers).values({ groupId: id, userId: dto.userId }).onConflictDoNothing().returning({ userId: groupMembers.userId });
+    if (added.length) {
+      this.activity.record({ action: 'group.member_added', actorId: me.id, target: { type: 'group', id, name: g.name }, details: { member: await this.activity.subjectName('user', dto.userId) } });
+    }
     return { ok: true };
   }
 
   @Delete('groups/:id/members/:userId')
-  async removeMember(@Param('id', ParseUUIDPipe) id: string, @Param('userId', ParseUUIDPipe) userId: string) {
-    await this.localGroup(id);
-    await this.db.delete(groupMembers).where(and(eq(groupMembers.groupId, id), eq(groupMembers.userId, userId)));
+  async removeMember(@CurrentUser() me: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Param('userId', ParseUUIDPipe) userId: string) {
+    const g = await this.localGroup(id);
+    const removed = await this.db
+      .delete(groupMembers)
+      .where(and(eq(groupMembers.groupId, id), eq(groupMembers.userId, userId)))
+      .returning({ userId: groupMembers.userId });
+    if (removed.length) {
+      this.activity.record({ action: 'group.member_removed', actorId: me.id, target: { type: 'group', id, name: g.name }, details: { member: await this.activity.subjectName('user', userId) } });
+    }
     return { ok: true };
   }
 }

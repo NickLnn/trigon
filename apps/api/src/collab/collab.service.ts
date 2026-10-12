@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { atLeast } from '@trigon/shared';
 import { eq } from 'drizzle-orm';
 import { yXmlFragmentToProsemirrorJSON } from 'y-prosemirror';
+import { ActivityService } from '../activity/activity.service';
 import { TokensService } from '../auth/tokens.service';
 import { Database, InjectDb } from '../db/db.module';
 import { documents } from '../db/schema';
@@ -40,6 +41,7 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
     private readonly config: ConfigService,
     private readonly tokens: TokensService,
     private readonly perms: PermissionsService,
+    private readonly activity: ActivityService,
   ) {}
 
   async onModuleInit() {
@@ -52,6 +54,9 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
         },
         store: async ({ documentName, state, document, lastContext }) => {
           try {
+            const userId = (lastContext as { userId?: string } | undefined)?.userId;
+            // The first save of an imported page only materialises the import (someone opened it), it isn't an edit.
+            const [prev] = await this.db.select({ importHtml: documents.importHtml }).from(documents).where(eq(documents.id, documentName));
             const json = yXmlFragmentToProsemirrorJSON(document.getXmlFragment('default')) as PMNode;
             await this.db
               .update(documents)
@@ -61,9 +66,10 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
                 textContent: proseMirrorText(json).slice(0, 1_000_000),
                 // Once an editor has materialised an import into the Yjs doc, the raw HTML is no longer needed.
                 importHtml: null,
-                updatedById: (lastContext as { userId?: string } | undefined)?.userId,
+                updatedById: userId,
               })
               .where(eq(documents.id, documentName));
+            if (prev && prev.importHtml === null) this.activity.noteEdit(userId, documentName);
           } catch (err) {
             // Never lose a save silently.
             this.logger.error(`Saving document ${documentName} failed: ${(err as Error).message}`);
