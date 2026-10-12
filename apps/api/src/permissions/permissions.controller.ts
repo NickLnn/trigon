@@ -1,7 +1,8 @@
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { PERMISSION_LEVELS, type EffectiveGrant, type PermissionLevel } from '@trigon/shared';
 import { IsIn, IsOptional, IsUUID } from 'class-validator';
-import { and, eq, inArray, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { documents, groups, permissions, spaces, users } from '../db/schema';
@@ -31,7 +32,43 @@ export class PermissionsController {
   constructor(
     private readonly perms: PermissionsService,
     @InjectDb() private readonly db: Database,
+    private readonly activity: ActivityService,
   ) {}
+
+  /** The shared space or page/folder/file, as an activity target. */
+  private async resource(type: 'space' | 'document', id: string) {
+    if (type === 'space') {
+      const [s] = await this.db.select({ name: spaces.name }).from(spaces).where(eq(spaces.id, id));
+      return { spaceId: id, target: { type: 'space', id, name: s?.name ?? 'Space' } };
+    }
+    const [d] = await this.db.select({ spaceId: documents.spaceId, title: documents.title, kind: documents.kind }).from(documents).where(eq(documents.id, id));
+    return { spaceId: d?.spaceId ?? null, target: { type: d?.kind ?? 'item', id, name: d?.title ?? 'Unknown' } };
+  }
+
+  private async recordShare(
+    actorId: string,
+    action: 'share.added' | 'share.changed' | 'share.removed',
+    grant: { resourceType: 'space' | 'document'; resourceId: string; subjectType: 'user' | 'group' | 'everyone'; subjectId: string | null; level: PermissionLevel },
+    previousLevel?: PermissionLevel,
+  ) {
+    const [{ spaceId, target }, sharedWith] = await Promise.all([
+      this.resource(grant.resourceType, grant.resourceId),
+      this.activity.subjectName(grant.subjectType, grant.subjectId),
+    ]);
+    this.activity.record({
+      action,
+      actorId,
+      spaceId,
+      target,
+      details: {
+        sharedWith,
+        sharedWithType: grant.subjectType,
+        sharedWithId: grant.subjectId,
+        level: grant.level,
+        ...(previousLevel ? { previousLevel } : {}),
+      },
+    });
+  }
 
   private assertManage(user: AuthUser, type: 'space' | 'document', id: string) {
     return type === 'space' ? this.perms.assertSpace(user, id, 'manage') : this.perms.assertDocument(user, id, 'manage');
@@ -109,7 +146,22 @@ export class PermissionsController {
   async grant(@CurrentUser() user: AuthUser, @Body() dto: GrantDto) {
     if (dto.subjectType !== 'everyone' && !dto.subjectId) throw new BadRequestException('subjectId required');
     await this.assertManage(user, dto.resourceType, dto.resourceId);
-    return this.perms.grant({ ...dto, subjectId: dto.subjectId ?? null, grantedById: user.id });
+    const subjectId = dto.subjectType === 'everyone' ? null : (dto.subjectId ?? null);
+    const [existing] = await this.db
+      .select({ level: permissions.level })
+      .from(permissions)
+      .where(
+        and(
+          eq(permissions.resourceType, dto.resourceType),
+          eq(permissions.resourceId, dto.resourceId),
+          eq(permissions.subjectType, dto.subjectType),
+          subjectId ? eq(permissions.subjectId, subjectId) : isNull(permissions.subjectId),
+        ),
+      );
+    const row = await this.perms.grant({ ...dto, subjectId, grantedById: user.id });
+    if (!existing) await this.recordShare(user.id, 'share.added', { ...dto, subjectId });
+    else if (existing.level !== dto.level) await this.recordShare(user.id, 'share.changed', { ...dto, subjectId }, existing.level);
+    return row;
   }
 
   @Delete(':id')
@@ -118,6 +170,7 @@ export class PermissionsController {
     if (!row) throw new NotFoundException();
     await this.assertManage(user, row.resourceType, row.resourceId);
     await this.perms.revoke(id);
+    await this.recordShare(user.id, 'share.removed', row);
     return { ok: true };
   }
 }

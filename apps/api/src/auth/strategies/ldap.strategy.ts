@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import type { Request } from 'express';
 import { Strategy } from 'passport-custom';
+import { ActivityService } from '../../activity/activity.service';
 import type { AuthUser } from '../../common/decorators';
 import { DirectorySyncService } from '../../directory/directory-sync.service';
 import { LdapService } from '../../directory/ldap.service';
@@ -14,6 +15,7 @@ export class LdapStrategy extends PassportStrategy(Strategy, 'ldap') {
     private readonly ldap: LdapService,
     private readonly identity: IdentityService,
     private readonly sync: DirectorySyncService,
+    private readonly activity: ActivityService,
   ) {
     super();
   }
@@ -21,7 +23,15 @@ export class LdapStrategy extends PassportStrategy(Strategy, 'ldap') {
   async validate(req: Request): Promise<AuthUser> {
     const { username, password } = (req.body ?? {}) as { username?: string; password?: string };
     const ldapUser = await this.ldap.authenticate(String(username ?? '').trim(), String(password ?? ''));
-    if (!ldapUser) throw new UnauthorizedException('Invalid domain credentials');
+    if (!ldapUser) {
+      this.activity.record({
+        action: 'user.sign_in_failed',
+        actorId: null,
+        actorName: String(username ?? '').trim().slice(0, 200),
+        details: { method: 'Domain (LDAP)', reason: 'Invalid domain credentials' },
+      });
+      throw new UnauthorizedException('Invalid domain credentials');
+    }
 
     const user = await this.identity.upsertExternal({
       provider: 'ldap',

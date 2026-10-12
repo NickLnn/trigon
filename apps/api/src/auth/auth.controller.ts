@@ -20,6 +20,7 @@ import { hash } from '@node-rs/argon2';
 import { REFRESH_COOKIE, type AuthConfig, type SessionUser } from '@trigon/shared';
 import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 import type { Request, Response } from 'express';
+import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Public, type AuthUser } from '../common/decorators';
 import { EntraRedirectService, redirectAllowed } from '../directory/entra-redirect.service';
 import { LdapService } from '../directory/ldap.service';
@@ -59,6 +60,7 @@ export class AuthController {
     private readonly jwt: JwtService,
     private readonly settings: SettingsService,
     private readonly redirects: EntraRedirectService,
+    private readonly activity: ActivityService,
   ) {}
 
   private async signupAllowed() {
@@ -82,6 +84,7 @@ export class AuthController {
     if (!(await this.signupAllowed())) throw new ForbiddenException('Self-registration is disabled');
     if (await this.identity.findUserByEmail(dto.email)) throw new ConflictException('An account with this email already exists');
     const user = await this.identity.createLocal(dto.email.trim(), dto.displayName.trim(), await hash(dto.password));
+    this.activity.record({ action: 'user.created', actorId: user.id, target: { type: 'user', id: user.id, name: user.displayName }, details: { selfRegistered: true } });
     await this.tokens.issueSession(res, user, req.headers['user-agent']);
     return this.identity.toSessionUser(user.id);
   }
@@ -92,7 +95,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   async login(@CurrentUser() user: AuthUser, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    return this.finishLogin(user, req, res);
+    return this.finishLogin(user, req, res, 'Email and password');
   }
 
   @Public()
@@ -101,12 +104,13 @@ export class AuthController {
   @Post('ldap')
   @HttpCode(200)
   async ldapLogin(@CurrentUser() user: AuthUser, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    return this.finishLogin(user, req, res);
+    return this.finishLogin(user, req, res, 'Domain (LDAP)');
   }
 
-  private async finishLogin(user: AuthUser, req: Request, res: Response): Promise<SessionUser | null> {
+  private async finishLogin(user: AuthUser, req: Request, res: Response, method: string): Promise<SessionUser | null> {
     await this.tokens.issueSession(res, user, req.headers['user-agent']);
     await this.identity.touchLogin(user.id);
+    this.activity.record({ action: 'user.signed_in', actorId: user.id, details: { method } });
     return this.identity.toSessionUser(user.id);
   }
 
@@ -152,8 +156,10 @@ export class AuthController {
       if (!user.active) throw new UnauthorizedException('Account disabled');
       await this.tokens.issueSession(res, user, req.headers['user-agent']);
       await this.identity.touchLogin(user.id);
+      this.activity.record({ action: 'user.signed_in', actorId: user.id, details: { method: 'Microsoft' } });
       res.redirect(`${base}${safeReturnTo(login?.returnTo)}`);
     } catch (err) {
+      this.activity.record({ action: 'user.sign_in_failed', actorId: null, actorName: 'Microsoft sign-in', details: { method: 'Microsoft', reason: (err as Error).message } });
       res.redirect(`${base}/login?error=${encodeURIComponent((err as Error).message)}`);
     }
   }

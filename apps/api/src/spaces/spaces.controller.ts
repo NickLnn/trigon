@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from
 import { SPACE_SORTS, treeComparator, type DocumentNode, type SpaceSort, type SpaceStats, type SpaceSummary } from '@trigon/shared';
 import { IsHexColor, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { documents, spaces } from '../db/schema';
@@ -85,6 +86,7 @@ export class SpacesController {
   constructor(
     @InjectDb() private readonly db: Database,
     private readonly perms: PermissionsService,
+    private readonly activity: ActivityService,
   ) {}
 
   @Get()
@@ -126,6 +128,7 @@ export class SpacesController {
       level: 'manage',
       grantedById: user.id,
     });
+    this.activity.record({ action: 'space.created', actorId: user.id, spaceId: space.id, target: { type: 'space', id: space.id, name: space.name } });
     return space;
   }
 
@@ -139,14 +142,34 @@ export class SpacesController {
   @Patch(':id')
   async update(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateSpaceDto) {
     await this.perms.assertSpace(user, id, 'manage');
+    const [before] = await this.db.select().from(spaces).where(eq(spaces.id, id));
     const [space] = await this.db.update(spaces).set(dto).where(eq(spaces.id, id)).returning();
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const f of ['name', 'description', 'icon', 'color', 'sortMode'] as const) {
+      if (dto[f] !== undefined && dto[f] !== before?.[f]) changes[f] = { from: before?.[f] ?? null, to: dto[f] };
+    }
+    if (Object.keys(changes).length) {
+      this.activity.record({ action: 'space.updated', actorId: user.id, spaceId: id, target: { type: 'space', id, name: space.name }, details: { changes } });
+    }
     return space;
   }
 
   @Delete(':id')
   async remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     await this.perms.assertSpace(user, id, 'manage');
+    const [space] = await this.db.select({ name: spaces.name }).from(spaces).where(eq(spaces.id, id));
+    const [{ items }] = await this.db
+      .select({ items: sql<number>`count(*)::int` })
+      .from(documents)
+      .where(and(eq(documents.spaceId, id), isNull(documents.deletedAt)));
     await this.db.delete(spaces).where(eq(spaces.id, id));
+    this.activity.record({
+      action: 'space.deleted',
+      actorId: user.id,
+      spaceId: id,
+      target: { type: 'space', id, name: space?.name ?? 'Space' },
+      details: { itemsDeleted: items },
+    });
     return { ok: true };
   }
 

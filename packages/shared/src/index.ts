@@ -114,6 +114,79 @@ export interface HealthStats {
   needsReview: { id: string; title: string; icon: string | null; spaceId: string; spaceName: string; status: DisplayStatus; since: string }[];
 }
 
+/** Activity explorer (audit log) — what people did, grouped like Microsoft Purview's activities. */
+export const ACTIVITY_CATEGORIES = ['content', 'sharing', 'spaces', 'access', 'admin'] as const;
+export type ActivityCategory = (typeof ACTIVITY_CATEGORIES)[number];
+
+export const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
+  content: 'Pages & files',
+  sharing: 'Sharing',
+  spaces: 'Spaces',
+  access: 'Sign-ins',
+  admin: 'Administration',
+};
+
+/** `{type}` in a label is replaced by the target type (page, folder, file…). */
+export const ACTIVITY_ACTIONS = {
+  'item.created': { category: 'content', label: 'Created {type}' },
+  'item.imported': { category: 'content', label: 'Imported page' },
+  'file.uploaded': { category: 'content', label: 'Uploaded file' },
+  'page.edited': { category: 'content', label: 'Edited page' },
+  'file.edited': { category: 'content', label: 'Edited file' },
+  'item.renamed': { category: 'content', label: 'Renamed {type}' },
+  'item.moved': { category: 'content', label: 'Moved {type}' },
+  'item.updated': { category: 'content', label: 'Changed {type} properties' },
+  'page.verified': { category: 'content', label: 'Verified page' },
+  'item.deleted': { category: 'content', label: 'Deleted {type}' },
+  'share.added': { category: 'sharing', label: 'Shared {type}' },
+  'share.changed': { category: 'sharing', label: 'Changed access to {type}' },
+  'share.removed': { category: 'sharing', label: 'Removed access to {type}' },
+  'space.created': { category: 'spaces', label: 'Created space' },
+  'space.updated': { category: 'spaces', label: 'Changed space' },
+  'space.deleted': { category: 'spaces', label: 'Deleted space' },
+  'user.signed_in': { category: 'access', label: 'Signed in' },
+  'user.sign_in_failed': { category: 'access', label: 'Failed sign-in' },
+  'user.created': { category: 'admin', label: 'Created user' },
+  'user.updated': { category: 'admin', label: 'Changed user' },
+  'user.password_set': { category: 'admin', label: 'Set password' },
+  'group.created': { category: 'admin', label: 'Created group' },
+  'group.deleted': { category: 'admin', label: 'Deleted group' },
+  'group.member_added': { category: 'admin', label: 'Added group member' },
+  'group.member_removed': { category: 'admin', label: 'Removed group member' },
+  'settings.updated': { category: 'admin', label: 'Changed settings' },
+} as const satisfies Record<string, { category: ActivityCategory; label: string }>;
+export type ActivityAction = keyof typeof ACTIVITY_ACTIONS;
+
+export function activityLabel(action: string, targetType: string | null): string {
+  const def = ACTIVITY_ACTIONS[action as ActivityAction];
+  if (!def) return action;
+  return def.label.replace('{type}', targetType ?? 'item');
+}
+
+export interface ActivityEvent {
+  id: string;
+  at: string;
+  actorId: string | null;
+  actorName: string | null;
+  actorEmail: string | null;
+  action: ActivityAction;
+  category: ActivityCategory;
+  spaceId: string | null;
+  spaceName: string | null;
+  /** page | folder | file | space | user | group | settings */
+  targetType: string | null;
+  targetId: string | null;
+  targetName: string | null;
+  details: Record<string, unknown>;
+  ip: string | null;
+  userAgent: string | null;
+}
+
+export interface ActivityPage {
+  items: ActivityEvent[];
+  nextCursor: string | null;
+}
+
 export interface SpaceStats {
   docs: number;
   verified: number;
