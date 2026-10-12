@@ -10,21 +10,28 @@ export interface OutgoingEmail {
   /** Plain-text body; also used to build the HTML version when `html` is omitted. */
   text: string;
   html?: string;
+  /** A button under the text (and a link line in the plain-text version). */
+  action?: { label: string; url: string };
 }
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-/** Minimal, mail-client-safe HTML around a plain-text message. */
-export function emailHtml(subject: string, text: string, appUrl: string) {
+/** Minimal, mail-client-safe HTML around a plain-text message. URLs in the text become links. */
+export function emailHtml(subject: string, text: string, appUrl: string, action?: OutgoingEmail['action']) {
+  const linkify = (s: string) => s.replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" style="color:#3b5bdb">${u}</a>`);
   const paragraphs = text
     .split(/\n{2,}/)
-    .map((p) => `<p style="margin:0 0 14px">${escape(p).replace(/\n/g, '<br>')}</p>`)
+    .map((p) => `<p style="margin:0 0 14px">${linkify(escape(p)).replace(/\n/g, '<br>')}</p>`)
     .join('');
+  const button = action
+    ? `<tr><td style="padding:6px 0 18px"><a href="${escape(action.url)}" style="display:inline-block;background:#3b5bdb;color:#ffffff;text-decoration:none;font-weight:600;padding:11px 20px;border-radius:999px">${escape(action.label)}</a></td></tr>`
+    : '';
   return `<!doctype html><html><body style="margin:0;background:#f4f5f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1b2033">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:16px;padding:28px">
 <tr><td style="font-size:18px;font-weight:700;padding-bottom:16px">${escape(subject)}</td></tr>
 <tr><td style="font-size:15px;line-height:1.55">${paragraphs}</td></tr>
+${button}
 <tr><td style="padding-top:12px;font-size:12px;color:#7a8099">Sent by Trigon · <a href="${escape(appUrl)}" style="color:#7a8099">${escape(appUrl)}</a></td></tr>
 </table></td></tr></table></body></html>`;
 }
@@ -92,8 +99,9 @@ export class EmailService {
 
   private async deliver(s: EmailSettings, mail: OutgoingEmail) {
     const to = Array.isArray(mail.to) ? mail.to : [mail.to];
-    const html = mail.html ?? emailHtml(mail.subject, mail.text, this.settings.appUrl());
-    if (s.provider === 'smtp') return this.viaSmtp(s, to, mail.subject, mail.text, html);
+    const html = mail.html ?? emailHtml(mail.subject, mail.text, await this.settings.publicUrl(), mail.action);
+    const text = mail.action ? `${mail.text}\n\n${mail.action.label}: ${mail.action.url}` : mail.text;
+    if (s.provider === 'smtp') return this.viaSmtp(s, to, mail.subject, text, html);
     return this.viaGraph(s, to, mail.subject, html);
   }
 

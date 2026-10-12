@@ -346,6 +346,26 @@ export interface EmailSettings {
   smtpTlsRejectUnauthorized: boolean;
 }
 
+/** Which emails a person wants. Missing keys fall back to DEFAULT_NOTIFICATION_PREFS. */
+export interface NotificationPrefs {
+  /** Something was shared with me (directly or through a group), or my access level changed. */
+  shares: boolean;
+  /** My account was created, my role changed, I was (de)activated, an admin set my password. */
+  account: boolean;
+  /** Pages I own that need review or are still drafts. Weekly digests go out on Mondays. */
+  reviewDigest: 'off' | 'daily' | 'weekly';
+}
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { shares: true, account: true, reviewDigest: 'weekly' };
+
+export interface MyNotifications {
+  prefs: NotificationPrefs;
+  /** Where the emails go. */
+  email: string;
+  /** False until an admin sets up Settings → Email; choices are kept for then. */
+  emailEnabled: boolean;
+}
+
 /** Whether the Entra app can send mail (Mail.Send granted). */
 export interface EmailMicrosoftStatus {
   connected: boolean;

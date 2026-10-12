@@ -3,6 +3,7 @@ import { PERMISSION_LEVELS, type EffectiveGrant, type PermissionLevel } from '@t
 import { IsIn, IsOptional, IsUUID } from 'class-validator';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { ActivityService } from '../activity/activity.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { documents, groups, permissions, spaces, users } from '../db/schema';
@@ -33,6 +34,7 @@ export class PermissionsController {
     private readonly perms: PermissionsService,
     @InjectDb() private readonly db: Database,
     private readonly activity: ActivityService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** The shared space or page/folder/file, as an activity target. */
@@ -161,6 +163,9 @@ export class PermissionsController {
     const row = await this.perms.grant({ ...dto, subjectId, grantedById: user.id });
     if (!existing) await this.recordShare(user.id, 'share.added', { ...dto, subjectId });
     else if (existing.level !== dto.level) await this.recordShare(user.id, 'share.changed', { ...dto, subjectId }, existing.level);
+    if (!existing || existing.level !== dto.level) {
+      this.notifications.shared({ actorId: user.id, ...dto, subjectId, previousLevel: existing?.level ?? null });
+    }
     return row;
   }
 
