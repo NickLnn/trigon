@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { BackupDestination, BackupFile, BackupOverview, BackupSettings } from '@trigon/shared';
+import type { BackupDestination, BackupFile, BackupOverview, BackupSettings, GdriveConnectStatus } from '@trigon/shared';
 import { Check, CircleCheck, Copy, Download, ExternalLink, HardDrive, Loader2, Network, RotateCcw, Server, ShieldCheck, Trash2, Unplug } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
@@ -67,29 +67,181 @@ function CopyBlock({ text }: { text: string }) {
   );
 }
 
-/** Google Drive: the admin's own OAuth client, Connect / Disconnect, and the folder (created automatically). */
+/** "Connect Google Drive": set-up steps with direct links, then a code to enter at google.com/device. */
+function GoogleConnectSheet({ open, onOpenChange, stored, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; stored: BackupSettings; onDone: () => void }) {
+  const [clientId, setClientId] = useState(stored.gdriveClientId);
+  const [clientSecret, setClientSecret] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [started, setStarted] = useState(false);
+  const status = useQuery({
+    queryKey: ['gdrive-connect'],
+    queryFn: () => api<GdriveConnectStatus>('/backups/gdrive/connect'),
+    enabled: open && started,
+    refetchInterval: (q) => (q.state.data?.state === 'waiting_for_sign_in' || q.state.data?.state === 'working' ? 2000 : false),
+  });
+  const qc = useQueryClient();
+  const start = useMutation({
+    mutationFn: () => api<GdriveConnectStatus>('/backups/gdrive/connect', { method: 'POST', json: { clientId, clientSecret: clientSecret || undefined } }),
+    onSuccess: (s) => {
+      qc.setQueryData(['gdrive-connect'], s);
+      setStarted(true);
+    },
+  });
+  const s = started ? status.data : undefined;
+  useEffect(() => {
+    if (s?.state === 'done') onDone();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s?.state]);
+  useEffect(() => {
+    if (!open) return;
+    setStarted(false);
+    start.reset();
+    setClientId(stored.gdriveClientId);
+    setClientSecret('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const active = s?.state === 'waiting_for_sign_in' || s?.state === 'working';
+  const canStart = !!clientId.trim() && (!!clientSecret.trim() || !!stored.hasGdriveClientSecret);
+  const link = (href: string, text: string) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-accent">
+      {text} <ExternalLink className="size-3" />
+    </a>
+  );
+
+  const header = (
+    <div className="mb-4 flex items-center gap-3 rounded-2xl bg-surface-2/60 p-3">
+      <span className="grid size-11 place-items-center rounded-xl bg-white shadow-sm ring-1 ring-line">
+        <GoogleDriveLogo className="size-6" />
+      </span>
+      <span className="text-sm text-ink-2">
+        Trigon stores backups in <b className="text-ink">one folder of your Google Drive</b>, created for you. With Google&apos;s <b className="text-ink">drive.file</b> permission it can never see the rest of your Drive.
+      </span>
+    </div>
+  );
+
+  if (!s || s.state === 'idle') {
+    return (
+      <BottomSheet open={open} onOpenChange={onOpenChange} title="Connect Google Drive" description="One-time set-up in Google Cloud (about 5 minutes), then sign in with a code.">
+        {header}
+        <ol className="space-y-3 text-sm text-ink-2">
+          <li className="flex gap-3">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent">1</span>
+            <span>
+              {link('https://console.cloud.google.com/projectcreate', 'Create a Google Cloud project')} named e.g. <b className="text-ink">Trigon</b> (free).
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent">2</span>
+            <span>
+              {link('https://console.cloud.google.com/apis/library/drive.googleapis.com', 'Enable the Google Drive API')} for that project.
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent">3</span>
+            <span>
+              {link('https://console.cloud.google.com/auth/overview', 'Google Auth Platform')} → <b className="text-ink">Get started</b>: app name <b className="text-ink">Trigon</b>, your email, audience <b className="text-ink">External</b>. Then under{' '}
+              <b className="text-ink">Audience</b> press <b className="text-ink">Publish app</b> — otherwise Google disconnects Trigon after 7 days. No Google review is needed for this permission.
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent">4</span>
+            <span>
+              {link('https://console.cloud.google.com/auth/clients/create', 'Create an OAuth client')} with application type <b className="text-ink">TVs and Limited Input devices</b>, name <b className="text-ink">Trigon</b>. Copy the
+              client ID and secret here:
+            </span>
+          </li>
+        </ol>
+        <div className="mt-4 space-y-3">
+          <Field label="Client ID">
+            <TextInput value={clientId} onChange={(e) => setClientId(e.target.value.trim())} placeholder="1234-abc.apps.googleusercontent.com" autoCapitalize="none" />
+          </Field>
+          <Field label="Client secret" hint={stored.hasGdriveClientSecret ? 'A secret is stored. Leave empty to keep it.' : 'Stored encrypted.'}>
+            <TextInput type="password" autoComplete="new-password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value.trim())} placeholder={stored.hasGdriveClientSecret ? '••••••••' : 'GOCSPX-…'} />
+          </Field>
+          {start.error && <Result result={{ ok: false, message: start.error.message }} />}
+          <Button className="w-full" disabled={!canStart} busy={start.isPending} onClick={() => start.mutate()}>
+            <GoogleDriveLogo className="size-4" /> Continue — sign in with Google
+          </Button>
+        </div>
+      </BottomSheet>
+    );
+  }
+
+  return (
+    <BottomSheet open={open} onOpenChange={onOpenChange} title="Connect Google Drive" description="Sign in with the Google account whose Drive should hold the backups.">
+      {header}
+      {s.state === 'waiting_for_sign_in' && s.userCode && (
+        <div className="rounded-2xl bg-surface-2 p-5 text-center">
+          <p className="text-sm text-ink-2">1. Open Google&apos;s device sign-in page</p>
+          <a
+            href={s.verificationUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="press mt-2 inline-flex items-center gap-2 rounded-pill bg-accent px-5 py-2.5 font-semibold text-accent-ink"
+          >
+            {(s.verificationUrl ?? 'google.com/device').replace(/^https?:\/\/(www\.)?/, '')} <ExternalLink className="size-4" />
+          </a>
+          <p className="mt-5 text-sm text-ink-2">2. Enter this code</p>
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(s.userCode!);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+            className="press mt-2 inline-flex items-center gap-3 rounded-2xl bg-surface px-5 py-3 font-mono text-2xl font-bold tracking-[0.2em] shadow-card"
+          >
+            {s.userCode}
+            {copied ? <Check className="size-5 text-success" /> : <Copy className="size-5 text-ink-3" />}
+          </button>
+          <p className="mt-5 text-meta text-ink-3">3. Choose your Google account and allow access. If Google says the app isn&apos;t verified, choose Advanced → Go to Trigon — it&apos;s your own app. This page continues by itself.</p>
+        </div>
+      )}
+      <ol className="mt-5 space-y-2.5">
+        {s.steps.map((step, i) => {
+          const running = !step.done && (i === 0 || s.steps[i - 1].done) && active;
+          return (
+            <li key={step.label} className="flex items-center gap-3 text-sm">
+              <span className={`grid size-6 shrink-0 place-items-center rounded-full ${step.done ? 'bg-success text-white' : running ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-ink-3'}`}>
+                {step.done ? <Check className="size-3.5" /> : running ? <Loader2 className="size-3.5 animate-spin" /> : i + 1}
+              </span>
+              <span className={step.done ? '' : 'text-ink-2'}>{step.label}</span>
+            </li>
+          );
+        })}
+      </ol>
+      {s.state === 'done' && (
+        <div className="mt-5 space-y-3">
+          <Result result={{ ok: true, message: s.message ?? 'Connected.' }} />
+          <Button className="w-full" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </div>
+      )}
+      {s.state === 'error' && (
+        <div className="mt-5 space-y-3">
+          <Result result={{ ok: false, message: s.message ?? 'Something went wrong' }} />
+          <Button onClick={() => setStarted(false)}>Try again</Button>
+        </div>
+      )}
+    </BottomSheet>
+  );
+}
+
+/** Google Drive in the "Where" card: connected state, or the button that opens the connect pop-up. */
 function GoogleDriveSection({
   form,
   set,
   stored,
-  onDisconnected,
+  onChanged,
 }: {
   form: BackupSettings;
   set: (p: Partial<BackupSettings>) => void;
   stored: BackupSettings;
-  onDisconnected: (fresh: BackupOverview) => void;
+  onChanged: (fresh?: BackupOverview) => void;
 }) {
-  const [origin, setOrigin] = useState('');
-  useEffect(() => setOrigin(window.location.origin), []);
-  const https = origin.startsWith('https://') || origin.startsWith('http://localhost');
-  const redirect = `${origin}/api/backups/gdrive/callback`;
+  const [open, setOpen] = useState(false);
   const connected = !!stored.hasGdriveRefreshToken && !!stored.gdriveFolderId;
-  const clientReady = !!stored.gdriveClientId && !!stored.hasGdriveClientSecret && stored.gdriveClientId === form.gdriveClientId;
-  const connect = useMutation({
-    mutationFn: () => api<{ url: string }>('/backups/gdrive/connect', { method: 'POST' }),
-    onSuccess: ({ url }) => (window.location.href = url),
-  });
-  const disconnect = useMutation({ mutationFn: () => api<BackupOverview>('/backups/gdrive/disconnect', { method: 'POST' }), onSuccess: onDisconnected });
+  const disconnect = useMutation({ mutationFn: () => api<BackupOverview>('/backups/gdrive/disconnect', { method: 'POST' }), onSuccess: (fresh) => onChanged(fresh) });
 
   return (
     <>
@@ -97,64 +249,33 @@ function GoogleDriveSection({
         <GoogleDriveLogo className="size-4" /> Google Drive
       </h3>
       {connected ? (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-success/10 px-4 py-3 text-sm">
-          <CircleCheck className="size-5 shrink-0 text-success" />
-          <span className="min-w-0 flex-1">
-            Connected{stored.gdriveAccount ? ` as ${stored.gdriveAccount}` : ''}. Backups go to <b>My Drive › {stored.gdriveFolderName}</b>.
-          </span>
-          <a href={`https://drive.google.com/drive/folders/${stored.gdriveFolderId}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-accent">
-            Open folder <ExternalLink className="size-3.5" />
-          </a>
-          <button type="button" onClick={() => disconnect.mutate()} className="inline-flex items-center gap-1 font-semibold text-ink-3 hover:text-danger">
-            <Unplug className="size-3.5" /> Disconnect
-          </button>
-        </div>
+        <>
+          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-success/10 px-4 py-3 text-sm">
+            <CircleCheck className="size-5 shrink-0 text-success" />
+            <span className="min-w-0 flex-1">
+              Connected{stored.gdriveAccount ? ` as ${stored.gdriveAccount}` : ''}. Backups go to <b>My Drive › {stored.gdriveFolderName}</b>.
+            </span>
+            <a href={`https://drive.google.com/drive/folders/${stored.gdriveFolderId}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-accent">
+              Open folder <ExternalLink className="size-3.5" />
+            </a>
+            <button type="button" onClick={() => disconnect.mutate()} className="inline-flex items-center gap-1 font-semibold text-ink-3 hover:text-danger">
+              <Unplug className="size-3.5" /> Disconnect
+            </button>
+          </div>
+          <Field label="Folder in My Drive" hint="Created automatically. Change the name and save to put new backups in another folder.">
+            <TextInput value={form.gdriveFolderName} onChange={(e) => set({ gdriveFolderName: e.target.value })} placeholder="Trigon Backups" />
+          </Field>
+        </>
       ) : (
-        <ol className="space-y-2 rounded-xl bg-surface-2/60 p-4 text-sm text-ink-2">
-          <li>
-            <b className="text-ink">1.</b> In{' '}
-            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="font-semibold text-accent">
-              Google Cloud Console → Credentials
-            </a>{' '}
-            create a project, enable the <b>Google Drive API</b>, and on the OAuth consent screen choose <b>External</b> and set publishing status to <b>In production</b> (otherwise Google disconnects Trigon after 7 days).
-          </li>
-          <li>
-            <b className="text-ink">2.</b> Create an <b>OAuth client ID</b> of type <b>Web application</b> with this authorised redirect URI:
-            {https ? (
-              <span className="mt-1.5 block">
-                <CopyBlock text={redirect} />
-              </span>
-            ) : (
-              <span className="mt-1.5 block rounded-lg bg-warning/12 px-3 py-2 text-ink">
-                Google only accepts https:// addresses. Open Trigon at its public HTTPS address to see the URI and connect.
-              </span>
-            )}
-          </li>
-          <li>
-            <b className="text-ink">3.</b> Paste the client ID and secret below, press <b>Save</b>, then <b>Connect Google Drive</b>.
-          </li>
-        </ol>
-      )}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Field label="OAuth client ID">
-          <TextInput value={form.gdriveClientId} onChange={(e) => set({ gdriveClientId: e.target.value.trim() })} placeholder="1234-abc.apps.googleusercontent.com" autoCapitalize="none" />
-        </Field>
-        <Field label="Client secret" hint={stored.hasGdriveClientSecret ? 'Stored. Leave empty to keep it.' : undefined}>
-          <TextInput type="password" autoComplete="new-password" value={form.gdriveClientSecret ?? ''} onChange={(e) => set({ gdriveClientSecret: e.target.value.trim() })} placeholder={stored.hasGdriveClientSecret ? '••••••••' : 'GOCSPX-…'} />
-        </Field>
-      </div>
-      <Field label="Folder in My Drive" hint="Trigon creates it if it doesn't exist (and only ever sees this folder). Change the name and save to move new backups to another folder.">
-        <TextInput value={form.gdriveFolderName} onChange={(e) => set({ gdriveFolderName: e.target.value })} placeholder="Trigon Backups" />
-      </Field>
-      {!connected && (
-        <div>
-          <Button type="button" onClick={() => connect.mutate()} busy={connect.isPending} disabled={!clientReady || !https}>
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surface-2/60 px-4 py-3 text-sm">
+          <span className="min-w-0 flex-1 text-ink-2">Not connected yet. A short one-time set-up, then sign in with a code — the backup folder is created for you.</span>
+          <Button type="button" onClick={() => setOpen(true)}>
             <GoogleDriveLogo className="size-4" /> Connect Google Drive
           </Button>
-          {!clientReady && <p className="mt-1.5 text-meta text-ink-3">Save the client ID and secret first.</p>}
         </div>
       )}
-      {(connect.error || disconnect.error) && <Result result={{ ok: false, message: (connect.error ?? disconnect.error)!.message }} />}
+      {disconnect.error && <Result result={{ ok: false, message: disconnect.error.message }} />}
+      <GoogleConnectSheet open={open} onOpenChange={setOpen} stored={stored} onDone={() => onChanged()} />
     </>
   );
 }
@@ -239,18 +360,6 @@ export default function BackupsSettingsPage() {
     }
   }, [data, form]);
 
-  // Back from Google's sign-in page.
-  const [gdriveNotice, setGdriveNotice] = useState<{ ok: boolean; message: string } | null>(null);
-  useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    const result = p.get('gdrive');
-    if (!result) return;
-    setGdriveNotice(result === 'connected' ? { ok: true, message: 'Google Drive is connected and the backup folder is ready.' } : { ok: false, message: p.get('message') ?? 'Google Drive could not be connected.' });
-    window.history.replaceState(null, '', window.location.pathname);
-    qc.invalidateQueries({ queryKey: ['backups'] });
-    setForm(null);
-  }, [qc]);
-
   const payload = () => {
     const { hasSmbPassword: _h, lastRun: _l, hasGdriveClientSecret: _gs, hasGdriveRefreshToken: _gt, gdriveAccount: _ga, gdriveFolderId: _gf, gdriveRefreshToken: _gr, ...rest } = form!;
     return rest;
@@ -281,7 +390,6 @@ export default function BackupsSettingsPage() {
   return (
     <div className="space-y-5">
       {restarting && <RestartWatcher />}
-      {gdriveNotice && <Result result={gdriveNotice} />}
 
       <SettingsCard
         title="Status"
@@ -472,9 +580,10 @@ export default function BackupsSettingsPage() {
                 form={form}
                 set={set}
                 stored={data.settings}
-                onDisconnected={(fresh) => {
-                  qc.setQueryData(['backups'], fresh);
-                  setForm({ ...fresh.settings, smbPassword: '', gdriveClientSecret: '' });
+                onChanged={(fresh) => {
+                  if (fresh) qc.setQueryData(['backups'], fresh);
+                  else qc.invalidateQueries({ queryKey: ['backups'] });
+                  setForm(null);
                 }}
               />
             )}

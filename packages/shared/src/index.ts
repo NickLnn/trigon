@@ -539,6 +539,16 @@ export interface BackupFile {
   locations: BackupDestination[];
 }
 
+/** "Connect Google Drive" (device sign-in), polled by the pop-up. */
+export interface GdriveConnectStatus {
+  state: 'idle' | 'waiting_for_sign_in' | 'working' | 'done' | 'error';
+  userCode?: string;
+  verificationUrl?: string;
+  expiresAt?: string;
+  steps: { label: string; done: boolean }[];
+  message?: string;
+}
+
 export interface BackupDestinationStatus {
   key: BackupDestination;
   label: string;
