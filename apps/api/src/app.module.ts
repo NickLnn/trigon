@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ActivityModule } from './activity/activity.module';
+import { BackupsModule } from './backups/backups.module';
 import { AuthModule } from './auth/auth.module';
 import { CollabModule } from './collab/collab.module';
 import { JwtAuthGuard, RolesGuard } from './common/guards';
@@ -43,6 +44,7 @@ import { UsersModule } from './users/users.module';
     SettingsModule,
     NotificationsModule,
     ReviewsModule,
+    BackupsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -161,6 +161,10 @@ export const ACTIVITY_ACTIONS = {
   'group.member_added': { category: 'admin', label: 'Added group member' },
   'group.member_removed': { category: 'admin', label: 'Removed group member' },
   'settings.updated': { category: 'admin', label: 'Changed settings' },
+  'backup.created': { category: 'admin', label: 'Backed up Trigon' },
+  'backup.failed': { category: 'admin', label: 'Backup failed' },
+  'backup.restored': { category: 'admin', label: 'Restored a backup' },
+  'backup.deleted': { category: 'admin', label: 'Deleted a backup' },
 } as const satisfies Record<string, { category: ActivityCategory; label: string }>;
 export type ActivityAction = keyof typeof ACTIVITY_ACTIONS;
 
@@ -473,6 +477,63 @@ export interface SyncSourceStatus {
   lastError: string | null;
   lastGroupSync: string | null;
   accounts: number;
+}
+
+/** Where backups go: a folder on this server, an SMB share, or an NFS export mounted into the container. */
+export const BACKUP_DESTINATIONS = ['local', 'smb', 'nfs'] as const;
+export type BackupDestination = (typeof BACKUP_DESTINATIONS)[number];
+
+export interface BackupSettings {
+  /** Run on the schedule (manual "Back up now" always works). */
+  enabled: boolean;
+  /** Cron expression, e.g. "0 2 * * *" = every night at 02:00 (server time). */
+  schedule: string;
+  /** How many backups to keep at the destination; older ones are deleted after each backup. */
+  keep: number;
+  destination: BackupDestination;
+  /** Folder inside the container for 'local' (default /data/backups, mapped to ./data/backups). */
+  localPath: string;
+  /** NFS server and export, used to generate the docker-compose snippet; mounted at /data/backups-nfs. */
+  nfsServer: string;
+  nfsExport: string;
+  smbHost: string;
+  smbShare: string;
+  /** Folder inside the share (created when missing). */
+  smbPath: string;
+  smbUser: string;
+  smbDomain: string;
+  smbPassword?: string;
+  hasSmbPassword?: boolean;
+  /** Result of the last run (read-only). */
+  lastRun?: BackupRunResult | null;
+}
+
+export interface BackupRunResult {
+  ok: boolean;
+  at: string;
+  durationMs: number;
+  file: string | null;
+  sizeBytes: number | null;
+  message: string;
+  trigger: 'scheduled' | 'manual' | 'before-restore';
+}
+
+export interface BackupFile {
+  name: string;
+  sizeBytes: number;
+  createdAt: string;
+  trigger: BackupRunResult['trigger'];
+}
+
+export interface BackupOverview {
+  settings: BackupSettings;
+  running: { step: string; startedAt: string; kind: 'backup' | 'restore' } | null;
+  nextRun: string | null;
+  files: BackupFile[];
+  /** Whether the destination can be reached, and why not. */
+  destination: { ok: boolean; message: string; freeBytes: number | null; persistent: boolean | null };
+  /** docker-compose lines for an NFS destination (filled from nfsServer / nfsExport). */
+  nfsCompose: string;
 }
 
 export interface LdapSettings {

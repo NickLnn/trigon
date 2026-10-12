@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { EmailSettings, EntraSettings, GeneralSettings, LdapSettings } from '@trigon/shared';
+import type { BackupSettings, EmailSettings, EntraSettings, GeneralSettings, LdapSettings } from '@trigon/shared';
 import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -12,6 +12,7 @@ export interface SettingsMap {
   entra: EntraSettings;
   ldap: LdapSettings;
   email: EmailSettings;
+  backup: BackupSettings;
 }
 export type SettingsKey = keyof SettingsMap;
 
@@ -21,6 +22,7 @@ const SECRET_FIELDS: { [K in SettingsKey]: (keyof SettingsMap[K])[] } = {
   entra: ['clientSecret'],
   ldap: ['bindPassword'],
   email: ['smtpPassword'],
+  backup: ['smbPassword'],
 };
 
 /**
@@ -92,6 +94,22 @@ export class SettingsService {
         smtpUser: env('SMTP_USER'),
         smtpPassword: env('SMTP_PASSWORD'),
         smtpTlsRejectUnauthorized: env('SMTP_TLS_REJECT_UNAUTHORIZED', 'true') !== 'false',
+      },
+      backup: {
+        enabled: env('BACKUP_ENABLED', 'true') !== 'false',
+        schedule: env('BACKUP_SCHEDULE', '0 2 * * *'),
+        keep: Number(env('BACKUP_KEEP', '14')) || 14,
+        destination: 'local',
+        localPath: env('BACKUP_DIR', '/data/backups'),
+        nfsServer: '',
+        nfsExport: '',
+        smbHost: '',
+        smbShare: '',
+        smbPath: 'trigon-backups',
+        smbUser: '',
+        smbDomain: '',
+        smbPassword: '',
+        lastRun: null,
       },
       ldap: {
         enabled: env('LDAP_ENABLED') === 'true',
