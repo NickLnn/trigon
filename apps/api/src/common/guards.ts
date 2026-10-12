@@ -22,6 +22,8 @@ export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(ctx: ExecutionContext): boolean {
+    // A route marked @Public() has no signed-in user to check (e.g. an OAuth callback inside an admin controller).
+    if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [ctx.getHandler(), ctx.getClass()])) return true;
     const roles = this.reflector.getAllAndOverride<SystemRole[]>(ROLES, [ctx.getHandler(), ctx.getClass()]);
     if (!roles?.length) return true;
     const user = ctx.switchToHttp().getRequest().user;

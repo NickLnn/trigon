@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { BackupDestination, BackupFile, BackupOverview, BackupSettings } from '@trigon/shared';
-import { Check, Copy, Download, HardDrive, Loader2, Network, RotateCcw, Server, ShieldCheck, Trash2 } from 'lucide-react';
+import { Check, CircleCheck, Copy, Download, ExternalLink, HardDrive, Loader2, Network, RotateCcw, Server, ShieldCheck, Trash2, Unplug } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
@@ -16,11 +16,26 @@ const PRESETS = [
 ];
 const KEEP = [3, 7, 14, 30, 60, 90];
 
+function GoogleDriveLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 87.3 78" className={className} aria-hidden>
+      <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da" />
+      <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47" />
+      <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335" />
+      <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d" />
+      <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc" />
+      <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00" />
+    </svg>
+  );
+}
+
 const DESTINATIONS: { value: BackupDestination; label: string; hint: string; icon: ReactNode }[] = [
   { value: 'local', label: 'This server', hint: 'A folder next to Trigon on the NAS (data/backups). No setup.', icon: <HardDrive className="size-5" /> },
   { value: 'smb', label: 'SMB share', hint: 'A Windows / Synology / NAS share. Trigon connects with a user and password.', icon: <Network className="size-5" /> },
   { value: 'nfs', label: 'NFS share', hint: 'An NFS export, attached once in docker-compose.yml.', icon: <Server className="size-5" /> },
+  { value: 'gdrive', label: 'Google Drive', hint: 'Off-site copy in your Google Drive. Trigon only sees its own folder.', icon: <GoogleDriveLogo className="size-5" /> },
 ];
+const DEST_NAME: Record<BackupDestination, string> = { local: 'This server', smb: 'SMB', nfs: 'NFS', gdrive: 'Google Drive' };
 
 const size = (b: number | null | undefined) =>
   b == null ? '—' : b < 1024 ** 2 ? `${(b / 1024).toFixed(0)} KB` : b < 1024 ** 3 ? `${(b / 1024 ** 2).toFixed(1)} MB` : `${(b / 1024 ** 3).toFixed(2)} GB`;
@@ -49,6 +64,98 @@ function CopyBlock({ text }: { text: string }) {
         {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
       </button>
     </div>
+  );
+}
+
+/** Google Drive: the admin's own OAuth client, Connect / Disconnect, and the folder (created automatically). */
+function GoogleDriveSection({
+  form,
+  set,
+  stored,
+  onDisconnected,
+}: {
+  form: BackupSettings;
+  set: (p: Partial<BackupSettings>) => void;
+  stored: BackupSettings;
+  onDisconnected: (fresh: BackupOverview) => void;
+}) {
+  const [origin, setOrigin] = useState('');
+  useEffect(() => setOrigin(window.location.origin), []);
+  const https = origin.startsWith('https://') || origin.startsWith('http://localhost');
+  const redirect = `${origin}/api/backups/gdrive/callback`;
+  const connected = !!stored.hasGdriveRefreshToken && !!stored.gdriveFolderId;
+  const clientReady = !!stored.gdriveClientId && !!stored.hasGdriveClientSecret && stored.gdriveClientId === form.gdriveClientId;
+  const connect = useMutation({
+    mutationFn: () => api<{ url: string }>('/backups/gdrive/connect', { method: 'POST' }),
+    onSuccess: ({ url }) => (window.location.href = url),
+  });
+  const disconnect = useMutation({ mutationFn: () => api<BackupOverview>('/backups/gdrive/disconnect', { method: 'POST' }), onSuccess: onDisconnected });
+
+  return (
+    <>
+      <h3 className="flex items-center gap-2 pt-2 text-sm font-bold">
+        <GoogleDriveLogo className="size-4" /> Google Drive
+      </h3>
+      {connected ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-success/10 px-4 py-3 text-sm">
+          <CircleCheck className="size-5 shrink-0 text-success" />
+          <span className="min-w-0 flex-1">
+            Connected{stored.gdriveAccount ? ` as ${stored.gdriveAccount}` : ''}. Backups go to <b>My Drive › {stored.gdriveFolderName}</b>.
+          </span>
+          <a href={`https://drive.google.com/drive/folders/${stored.gdriveFolderId}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-accent">
+            Open folder <ExternalLink className="size-3.5" />
+          </a>
+          <button type="button" onClick={() => disconnect.mutate()} className="inline-flex items-center gap-1 font-semibold text-ink-3 hover:text-danger">
+            <Unplug className="size-3.5" /> Disconnect
+          </button>
+        </div>
+      ) : (
+        <ol className="space-y-2 rounded-xl bg-surface-2/60 p-4 text-sm text-ink-2">
+          <li>
+            <b className="text-ink">1.</b> In{' '}
+            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="font-semibold text-accent">
+              Google Cloud Console → Credentials
+            </a>{' '}
+            create a project, enable the <b>Google Drive API</b>, and on the OAuth consent screen choose <b>External</b> and set publishing status to <b>In production</b> (otherwise Google disconnects Trigon after 7 days).
+          </li>
+          <li>
+            <b className="text-ink">2.</b> Create an <b>OAuth client ID</b> of type <b>Web application</b> with this authorised redirect URI:
+            {https ? (
+              <span className="mt-1.5 block">
+                <CopyBlock text={redirect} />
+              </span>
+            ) : (
+              <span className="mt-1.5 block rounded-lg bg-warning/12 px-3 py-2 text-ink">
+                Google only accepts https:// addresses. Open Trigon at its public HTTPS address to see the URI and connect.
+              </span>
+            )}
+          </li>
+          <li>
+            <b className="text-ink">3.</b> Paste the client ID and secret below, press <b>Save</b>, then <b>Connect Google Drive</b>.
+          </li>
+        </ol>
+      )}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="OAuth client ID">
+          <TextInput value={form.gdriveClientId} onChange={(e) => set({ gdriveClientId: e.target.value.trim() })} placeholder="1234-abc.apps.googleusercontent.com" autoCapitalize="none" />
+        </Field>
+        <Field label="Client secret" hint={stored.hasGdriveClientSecret ? 'Stored. Leave empty to keep it.' : undefined}>
+          <TextInput type="password" autoComplete="new-password" value={form.gdriveClientSecret ?? ''} onChange={(e) => set({ gdriveClientSecret: e.target.value.trim() })} placeholder={stored.hasGdriveClientSecret ? '••••••••' : 'GOCSPX-…'} />
+        </Field>
+      </div>
+      <Field label="Folder in My Drive" hint="Trigon creates it if it doesn't exist (and only ever sees this folder). Change the name and save to move new backups to another folder.">
+        <TextInput value={form.gdriveFolderName} onChange={(e) => set({ gdriveFolderName: e.target.value })} placeholder="Trigon Backups" />
+      </Field>
+      {!connected && (
+        <div>
+          <Button type="button" onClick={() => connect.mutate()} busy={connect.isPending} disabled={!clientReady || !https}>
+            <GoogleDriveLogo className="size-4" /> Connect Google Drive
+          </Button>
+          {!clientReady && <p className="mt-1.5 text-meta text-ink-3">Save the client ID and secret first.</p>}
+        </div>
+      )}
+      {(connect.error || disconnect.error) && <Result result={{ ok: false, message: (connect.error ?? disconnect.error)!.message }} />}
+    </>
   );
 }
 
@@ -127,13 +234,25 @@ export default function BackupsSettingsPage() {
 
   useEffect(() => {
     if (data && !form) {
-      setForm({ ...data.settings, smbPassword: '' });
+      setForm({ ...data.settings, smbPassword: '', gdriveClientSecret: '' });
       setCustom(!PRESETS.some((p) => p.cron === data.settings.schedule));
     }
   }, [data, form]);
 
+  // Back from Google's sign-in page.
+  const [gdriveNotice, setGdriveNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const result = p.get('gdrive');
+    if (!result) return;
+    setGdriveNotice(result === 'connected' ? { ok: true, message: 'Google Drive is connected and the backup folder is ready.' } : { ok: false, message: p.get('message') ?? 'Google Drive could not be connected.' });
+    window.history.replaceState(null, '', window.location.pathname);
+    qc.invalidateQueries({ queryKey: ['backups'] });
+    setForm(null);
+  }, [qc]);
+
   const payload = () => {
-    const { hasSmbPassword: _h, lastRun: _l, ...rest } = form!;
+    const { hasSmbPassword: _h, lastRun: _l, hasGdriveClientSecret: _gs, hasGdriveRefreshToken: _gt, gdriveAccount: _ga, gdriveFolderId: _gf, gdriveRefreshToken: _gr, ...rest } = form!;
     return rest;
   };
   const save = useMutation({
@@ -157,11 +276,12 @@ export default function BackupsSettingsPage() {
     save.reset();
   };
   const last = data.settings.lastRun;
-  const savedDestination = data.settings.destination === form.destination;
+  const savedDestinations = [...data.settings.destinations].sort().join() === [...form.destinations].sort().join();
 
   return (
     <div className="space-y-5">
       {restarting && <RestartWatcher />}
+      {gdriveNotice && <Result result={gdriveNotice} />}
 
       <SettingsCard
         title="Status"
@@ -176,10 +296,12 @@ export default function BackupsSettingsPage() {
           <p>
             <b>Next:</b> {data.settings.enabled && data.nextRun ? `${when(data.nextRun)}` : 'not scheduled'}
           </p>
-          <p className={data.destination.ok && data.destination.persistent !== false ? 'text-ink-2' : 'text-danger'}>
-            <b className="text-ink">Destination:</b> {data.destination.message}
-            {data.destination.freeBytes != null && ` · ${size(data.destination.freeBytes)} free`}
-          </p>
+          {data.destinations.map((d) => (
+            <p key={d.key} className={d.ok ? 'text-ink-2' : 'text-danger'}>
+              <b className="text-ink">{DEST_NAME[d.key]}:</b> {d.message}
+              {d.freeBytes != null && ` · ${size(d.freeBytes)} free`}
+            </p>
+          ))}
         </div>
         {data.running ? (
           <p className="mt-4 flex items-center gap-2 rounded-xl bg-accent-soft/60 px-3.5 py-2.5 text-sm font-semibold text-accent">
@@ -187,7 +309,7 @@ export default function BackupsSettingsPage() {
           </p>
         ) : (
           <div className="mt-4">
-            <Button onClick={() => runNow.mutate()} busy={runNow.isPending} disabled={!data.destination.ok}>
+            <Button onClick={() => runNow.mutate()} busy={runNow.isPending} disabled={!data.destinations.some((d) => d.ok)}>
               <HardDrive className="size-4" /> Back up now
             </Button>
           </div>
@@ -253,25 +375,35 @@ export default function BackupsSettingsPage() {
           </div>
         </SettingsCard>
 
-        <SettingsCard title="Where">
-          <div className="grid gap-2 sm:grid-cols-3">
-            {DESTINATIONS.map((d) => (
-              <button
-                key={d.value}
-                type="button"
-                onClick={() => set({ destination: d.value })}
-                aria-pressed={form.destination === d.value}
-                className={`press rounded-2xl p-3.5 text-left ring-2 ${form.destination === d.value ? 'bg-accent-soft/50 ring-accent' : 'bg-surface-2/60 ring-transparent hover:bg-surface-2'}`}
-              >
-                <span className={`grid size-10 place-items-center rounded-xl ${form.destination === d.value ? 'bg-accent text-accent-ink' : 'bg-surface-3 text-ink-2'}`}>{d.icon}</span>
-                <span className={`mt-3 block font-semibold ${form.destination === d.value ? 'text-accent' : ''}`}>{d.label}</span>
-                <span className="mt-1 block text-meta text-ink-3">{d.hint}</span>
-              </button>
-            ))}
+        <SettingsCard title="Where" description="Pick one or more. Each backup is copied to every place you choose — e.g. the NAS for quick restores and Google Drive off-site.">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {DESTINATIONS.map((d) => {
+              const on = form.destinations.includes(d.value);
+              return (
+                <button
+                  key={d.value}
+                  type="button"
+                  onClick={() => {
+                    const next = on ? form.destinations.filter((x) => x !== d.value) : [...form.destinations, d.value];
+                    if (next.length) set({ destinations: next });
+                  }}
+                  aria-pressed={on}
+                  className={`press relative rounded-2xl p-3.5 text-left ring-2 ${on ? 'bg-accent-soft/50 ring-accent' : 'bg-surface-2/60 ring-transparent hover:bg-surface-2'}`}
+                >
+                  {on && <CircleCheck className="absolute right-3 top-3 size-5 text-accent" />}
+                  <span className={`grid size-10 place-items-center rounded-xl ${d.value === 'gdrive' ? 'bg-white ring-1 ring-line' : on ? 'bg-accent text-accent-ink' : 'bg-surface-3 text-ink-2'}`}>{d.icon}</span>
+                  <span className={`mt-3 block font-semibold ${on ? 'text-accent' : ''}`}>{d.label}</span>
+                  <span className="mt-1 block text-meta text-ink-3">{d.hint}</span>
+                </button>
+              );
+            })}
           </div>
 
           <div className="mt-5 space-y-4">
-            {form.destination === 'local' && (
+            {form.destinations.includes('local') && (
+              <h3 className="pt-2 text-sm font-bold">This server</h3>
+            )}
+            {form.destinations.includes('local') && (
               <>
                 <Field label="Folder" hint="Inside the container. /data/backups is the data/backups folder next to docker-compose.yml on the NAS.">
                   <TextInput value={form.localPath} onChange={(e) => set({ localPath: e.target.value.trim() })} className="font-mono" placeholder="/data/backups" />
@@ -282,8 +414,9 @@ export default function BackupsSettingsPage() {
               </>
             )}
 
-            {form.destination === 'smb' && (
+            {form.destinations.includes('smb') && (
               <>
+                <h3 className="pt-2 text-sm font-bold">SMB share</h3>
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Server" hint="Name or IP address, e.g. nas.local">
                     <TextInput value={form.smbHost} onChange={(e) => set({ smbHost: e.target.value.trim() })} placeholder="nas.local" autoCapitalize="none" />
@@ -310,8 +443,9 @@ export default function BackupsSettingsPage() {
               </>
             )}
 
-            {form.destination === 'nfs' && (
+            {form.destinations.includes('nfs') && (
               <>
+                <h3 className="pt-2 text-sm font-bold">NFS share</h3>
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="NFS server">
                     <TextInput value={form.nfsServer} onChange={(e) => set({ nfsServer: e.target.value.trim() })} placeholder="nas.local" autoCapitalize="none" />
@@ -332,6 +466,18 @@ export default function BackupsSettingsPage() {
                 </div>
               </>
             )}
+
+            {form.destinations.includes('gdrive') && (
+              <GoogleDriveSection
+                form={form}
+                set={set}
+                stored={data.settings}
+                onDisconnected={(fresh) => {
+                  qc.setQueryData(['backups'], fresh);
+                  setForm({ ...fresh.settings, smbPassword: '', gdriveClientSecret: '' });
+                }}
+              />
+            )}
           </div>
 
           <div className="mt-5 space-y-3">
@@ -351,7 +497,7 @@ export default function BackupsSettingsPage() {
         </SettingsCard>
       </form>
 
-      <SettingsCard title="Backups" description={savedDestination ? `At ${data.destination.ok ? data.destination.message.replace(/^Connected: /, '') : 'the destination'}, newest first.` : 'Save the new destination to see its backups.'}>
+      <SettingsCard title="Backups" description={savedDestinations ? 'Newest first, from every destination.' : 'Save your changes to see the backups at the new destinations.'}>
         {data.files.length === 0 ? (
           <p className="text-sm text-ink-3">No backups here yet.</p>
         ) : (
@@ -364,6 +510,11 @@ export default function BackupsSettingsPage() {
                     <span className="block truncate text-meta text-ink-3">
                       {relativeTime(f.createdAt)} · {size(f.sizeBytes)} · {f.name}
                     </span>
+                  </span>
+                  <span className="flex flex-wrap gap-1">
+                    {f.locations.map((l) => (
+                      <Badge key={l}>{DEST_NAME[l]}</Badge>
+                    ))}
                   </span>
                   <Badge tone={TRIGGER[f.trigger].tone}>{TRIGGER[f.trigger].label}</Badge>
                   <div className="flex gap-1">

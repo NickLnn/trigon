@@ -3,7 +3,8 @@ import { createReadStream, readFileSync } from 'node:fs';
 import { copyFile, mkdir, readdir, rm, stat, statfs, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { BackupSettings } from '@trigon/shared';
+import type { BackupDestination, BackupSettings } from '@trigon/shared';
+import { GoogleDriveDestination } from './gdrive';
 
 /** trigon-backup-2026-10-12_0200-scheduled.tar.gz */
 export const BACKUP_NAME = /^trigon-backup-\d{4}-\d{2}-\d{2}_\d{6}-(scheduled|manual|before-restore)\.tar\.gz$/;
@@ -249,9 +250,17 @@ export class SmbDestination implements Destination {
   }
 }
 
-export function destinationFor(s: BackupSettings): Destination {
-  if (s.destination === 'smb') return new SmbDestination(s);
-  if (s.destination === 'nfs') return new FolderDestination(NFS_MOUNT, `NFS ${s.nfsServer || 'server'}:${s.nfsExport || '/export'}`);
+/** Settings saved before several destinations existed had a single `destination`. */
+export function selectedDestinations(s: BackupSettings): BackupDestination[] {
+  const legacy = (s as BackupSettings & { destination?: BackupDestination }).destination;
+  const list = s.destinations?.length ? s.destinations : [legacy ?? 'local'];
+  return [...new Set(list)];
+}
+
+export function destinationFor(s: BackupSettings, key: BackupDestination): Destination {
+  if (key === 'smb') return new SmbDestination(s);
+  if (key === 'gdrive') return new GoogleDriveDestination(s);
+  if (key === 'nfs') return new FolderDestination(NFS_MOUNT, `NFS ${s.nfsServer || 'server'}:${s.nfsExport || '/export'}`);
   return new FolderDestination(s.localPath || '/data/backups', `This server (${s.localPath || '/data/backups'})`);
 }
 

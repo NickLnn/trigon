@@ -22,7 +22,7 @@ const SECRET_FIELDS: { [K in SettingsKey]: (keyof SettingsMap[K])[] } = {
   entra: ['clientSecret'],
   ldap: ['bindPassword'],
   email: ['smtpPassword'],
-  backup: ['smbPassword'],
+  backup: ['smbPassword', 'gdriveClientSecret', 'gdriveRefreshToken'],
 };
 
 /**
@@ -99,7 +99,7 @@ export class SettingsService {
         enabled: env('BACKUP_ENABLED', 'true') !== 'false',
         schedule: env('BACKUP_SCHEDULE', '0 2 * * *'),
         keep: Number(env('BACKUP_KEEP', '14')) || 14,
-        destination: 'local',
+        destinations: ['local'],
         localPath: env('BACKUP_DIR', '/data/backups'),
         nfsServer: '',
         nfsExport: '',
@@ -109,6 +109,12 @@ export class SettingsService {
         smbUser: '',
         smbDomain: '',
         smbPassword: '',
+        gdriveClientId: '',
+        gdriveClientSecret: '',
+        gdriveFolderName: 'Trigon Backups',
+        gdriveFolderId: null,
+        gdriveAccount: null,
+        gdriveRefreshToken: '',
         lastRun: null,
       },
       ldap: {
