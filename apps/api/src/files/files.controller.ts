@@ -134,8 +134,10 @@ export class FilesController {
       .update(documents)
       .set({ storageKey, sizeBytes: data.length, textContent: dto.content.slice(0, 1_000_000), updatedById: user.id })
       .where(eq(documents.id, documentId));
+    // Text of the previous version, for the activity log's diff (uploaded files have no extracted text yet).
+    const before = doc.textContent ?? ((doc.sizeBytes ?? 0) <= 5_000_000 ? (await this.storage.read(doc.storageKey)).toString('utf8') : '');
     await this.storage.remove(doc.storageKey);
-    this.activity.noteEdit(user.id, documentId, 'file.edited');
+    this.activity.noteEdit(user.id, documentId, { before, after: dto.content }, 'file.edited');
     return { ok: true, sizeBytes: data.length };
   }
 

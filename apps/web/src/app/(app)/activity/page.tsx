@@ -17,7 +17,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Avatar } from '@/components/ui/avatar';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { relativeTime } from '@/components/ui/doc-icon';
-import { activityQuery, changeLines, RANGES, summary, useActivity, useActivityActors, type ActivityFilters } from '@/lib/activity';
+import { activityQuery, changeLines, editDiff, RANGES, summary, useActivity, useActivityActors, type ActivityFilters, type EditDiff } from '@/lib/activity';
 import { useSpaces } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 
@@ -75,10 +75,48 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
+const DIFF_STYLE = {
+  '+': 'bg-success/12 text-success',
+  '-': 'bg-danger/10 text-danger line-through decoration-danger/40',
+  ' ': 'text-ink-2',
+  '…': 'text-ink-3',
+} as const;
+
+/** What changed in the text during an editing session: removed lines in red, added in green. */
+function DiffView({ diff }: { diff: EditDiff }) {
+  return (
+    <div className="mt-4">
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        What changed
+        <Badge tone="success">+{diff.added}</Badge>
+        <Badge tone="danger">−{diff.removed}</Badge>
+      </div>
+      <div className="max-h-80 overflow-auto rounded-2xl bg-surface-2/60 py-2 font-mono text-[0.8125rem] leading-relaxed">
+        {diff.lines.map((l, i) =>
+          l.t === '…' ? (
+            <div key={i} className="px-4 text-center text-ink-3">
+              ⋯
+            </div>
+          ) : (
+            <div key={i} className={`flex gap-3 whitespace-pre-wrap break-words px-4 ${DIFF_STYLE[l.t]}`}>
+              <span className="w-3 shrink-0 select-none text-ink-3">{l.t === ' ' ? '' : l.t === '-' ? '−' : '+'}</span>
+              <span className="min-w-0 flex-1">{l.s || ' '}</span>
+            </div>
+          ),
+        )}
+        {diff.lines.length === 0 && <p className="px-4 text-ink-3">Only formatting changed.</p>}
+      </div>
+      {diff.truncated && <p className="mt-1.5 text-meta text-ink-3">Long change — only the first part is shown.</p>}
+      <p className="mt-1.5 text-meta text-ink-3">Text only; formatting and images aren&apos;t compared.</p>
+    </div>
+  );
+}
+
 function EventSheet({ e, onClose, onFilter }: { e: ActivityEvent; onClose: () => void; onFilter: (patch: Partial<ActivityFilters>) => void }) {
   const d = e.details as Record<string, unknown>;
   const href = targetHref(e);
   const changes = changeLines(d.changes);
+  const diff = editDiff(d);
   return (
     <BottomSheet open onOpenChange={(v) => !v && onClose()} title={activityLabel(e.action, e.targetType)} description={fullTime(e.at)}>
       <dl className="rounded-2xl bg-surface-2/60 px-4 py-1">
@@ -132,6 +170,7 @@ function EventSheet({ e, onClose, onFilter }: { e: ActivityEvent; onClose: () =>
           </DetailRow>
         )}
       </dl>
+      {diff && <DiffView diff={diff} />}
       <div className="mt-4 flex flex-wrap gap-2">
         {e.actorId && (
           <Button variant="secondary" onClick={() => onFilter({ actor: e.actorId! })}>
