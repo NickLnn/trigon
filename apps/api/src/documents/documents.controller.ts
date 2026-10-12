@@ -292,7 +292,7 @@ export class DocumentsController {
         and(
           isNull(documents.deletedAt),
           sql`(${tsv} @@ ${query} OR ${titleHit})`,
-          spaceIds ? sql`${documents.spaceId} = ANY(${spaceIds}::uuid[])` : undefined,
+          spaceIds ? inArray(documents.spaceId, spaceIds) : undefined,
         ),
       )
       // Order by the expression itself — a SELECT alias isn't visible here (that was the old bug).
@@ -329,7 +329,7 @@ export class DocumentsController {
         and(
           isNull(documents.deletedAt),
           sql`${documents.kind} <> 'folder'`,
-          spaceIds ? sql`${documents.spaceId} = ANY(${spaceIds}::uuid[])` : undefined,
+          spaceIds ? inArray(documents.spaceId, spaceIds) : undefined,
         ),
       )
       .orderBy(desc(documents.updatedAt))
@@ -346,7 +346,7 @@ export class DocumentsController {
     const scope = and(
       isNull(documents.deletedAt),
       eq(documents.kind, 'page'),
-      spaceIds ? sql`${documents.spaceId} = ANY(${spaceIds}::uuid[])` : undefined,
+      spaceIds ? inArray(documents.spaceId, spaceIds) : undefined,
     );
     const [counts] = await this.db
       .select({
@@ -490,7 +490,7 @@ export class DocumentsController {
         SELECT id FROM ${documents} WHERE id = ${id}
         UNION ALL SELECT d.id FROM ${documents} d JOIN sub ON d.parent_id = sub.id
       )
-      UPDATE ${documents} SET deleted_at = now() WHERE id IN (SELECT id FROM sub) AND deleted_at IS NULL`);
+      UPDATE ${documents} SET deleted_at = now(), deleted_by_id = ${user.id} WHERE id IN (SELECT id FROM sub) AND deleted_at IS NULL`);
     this.activity.record({
       action: 'item.deleted',
       actorId: user.id,

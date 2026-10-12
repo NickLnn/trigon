@@ -141,6 +141,9 @@ export const ACTIVITY_ACTIONS = {
   'review.approved': { category: 'content', label: 'Approved {type} in review' },
   'review.changes_requested': { category: 'content', label: 'Requested changes to {type}' },
   'review.cancelled': { category: 'content', label: 'Cancelled a review request' },
+  'version.restored': { category: 'content', label: 'Restored an earlier version of {type}' },
+  'item.restored': { category: 'content', label: 'Restored {type} from trash' },
+  'item.purged': { category: 'content', label: 'Permanently deleted {type}' },
   'item.deleted': { category: 'content', label: 'Deleted {type}' },
   'share.added': { category: 'sharing', label: 'Shared {type}' },
   'share.changed': { category: 'sharing', label: 'Changed access to {type}' },
@@ -363,6 +366,48 @@ export interface NotificationPrefs {
 }
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { shares: true, account: true, reviewDigest: 'weekly', reviews: true };
+
+/** A saved version of a page: one per person per editing session (see VersionsService). */
+export interface DocumentVersion {
+  id: string;
+  /** When the editing session started and when it was last saved. */
+  createdAt: string;
+  updatedAt: string;
+  author: { id: string; name: string } | null;
+  title: string;
+  /** e.g. "Restored the version from 12 Oct 14:02" or "Before history was kept". */
+  note: string | null;
+  /** Lines added/removed compared with the version before it. */
+  added: number;
+  removed: number;
+  /** The newest version is the page as it is now. */
+  current: boolean;
+}
+
+export interface DocumentVersionDetail extends DocumentVersion {
+  /** ProseMirror JSON of the page at this version. */
+  content: Record<string, unknown> | null;
+  /** Line diff against the version before it. */
+  diff: { added: number; removed: number; lines: { t: ' ' | '+' | '-' | '…'; s: string }[]; truncated: boolean };
+}
+
+/** Something deleted from a space, waiting in its trash. */
+export interface TrashItem {
+  id: string;
+  title: string;
+  kind: DocumentKind;
+  icon: string | null;
+  mimeType: string | null;
+  pageType: PageType;
+  deletedAt: string;
+  deletedBy: string | null;
+  /** Items inside it (deleted together). */
+  inside: number;
+  /** Where it was; null at the space root. Restores go back there, or to the root if that is gone too. */
+  location: string | null;
+  /** When it is removed for good. */
+  purgeAt: string;
+}
 
 /** "Ask for review": one person asked another to check a page or file. */
 export const REVIEW_STATUSES = ['pending', 'approved', 'changes_requested', 'cancelled'] as const;

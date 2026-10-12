@@ -1,12 +1,13 @@
 'use client';
 
 import type { PageType } from '@trigon/shared';
-import { CircleCheck, Plus, X } from 'lucide-react';
+import { CircleCheck, History, Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { relativeTime } from '@/components/ui/doc-icon';
 import { StatusBadge, TagChip } from '@/components/ui/status-badge';
 import { usePatchDocumentMeta, useVerifyDocument, type DocumentDetail } from '@/lib/queries';
 import { ReviewersRow } from './review-requests';
+import { VersionHistorySheet } from './version-history';
 
 const TYPES: { key: PageType; label: string }[] = [
   { key: 'page', label: 'Page' },
@@ -50,6 +51,7 @@ export function DocDetails({ doc }: { doc: DocumentDetail }) {
   const patch = usePatchDocumentMeta(doc.id);
   const canEdit = doc.myPermission === 'edit' || doc.myPermission === 'manage';
   const [tag, setTag] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const addTag = () => {
     const t = tag.trim();
@@ -154,6 +156,15 @@ export function DocDetails({ doc }: { doc: DocumentDetail }) {
           )}
         </div>
       </Row>
+
+      {doc.kind === 'page' && (
+        <Row label="History">
+          <button onClick={() => setHistoryOpen(true)} className="inline-flex items-center gap-1.5 text-meta font-semibold text-accent">
+            <History className="size-3.5" /> Version history
+          </button>
+          <VersionHistorySheet open={historyOpen} onOpenChange={setHistoryOpen} documentId={doc.id} canRestore={canEdit} />
+        </Row>
+      )}
 
       <Row label="Owner">{doc.ownerName ?? '—'}</Row>
       <Row label="Last edited">

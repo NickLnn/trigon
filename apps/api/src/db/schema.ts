@@ -193,6 +193,7 @@ export const documents = pgTable(
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
     updatedById: uuid('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedById: uuid('deleted_by_id').references(() => users.id, { onDelete: 'set null' }),
     ...timestamps,
   },
   (t) => [
@@ -303,6 +304,29 @@ export const settings = pgTable('settings', {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+/**
+ * Page history. A version is the page at the end of one person's editing session (saves within 30
+ * minutes by the same person extend it), so restoring goes back to a meaningful point, not a keystroke.
+ */
+export const documentVersions = pgTable(
+  'document_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => documents.id, { onDelete: 'cascade' }),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    title: text('title').notNull(),
+    ydoc: bytea('ydoc').notNull(),
+    content: jsonb('content').$type<Record<string, unknown>>(),
+    textContent: text('text_content').notNull().default(''),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('document_versions_document_idx').on(t.documentId, t.updatedAt)],
+);
 
 /** "Ask for review": one person asks another to check a page or file; the reviewer approves or asks for changes. */
 export const reviewRequests = pgTable(

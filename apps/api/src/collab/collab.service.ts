@@ -6,12 +6,14 @@ import { ConfigService } from '@nestjs/config';
 import { atLeast } from '@trigon/shared';
 import { eq } from 'drizzle-orm';
 import { yXmlFragmentToProsemirrorJSON } from 'y-prosemirror';
+import * as Y from 'yjs';
 import { ActivityService } from '../activity/activity.service';
 import { clientIp } from '../activity/request-context';
 import { TokensService } from '../auth/tokens.service';
 import { Database, InjectDb } from '../db/db.module';
 import { documents } from '../db/schema';
 import { PermissionsService } from '../permissions/permissions.service';
+import { VersionsService } from '../versions/versions.service';
 
 interface PMNode {
   type: string;
@@ -43,6 +45,7 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
     private readonly tokens: TokensService,
     private readonly perms: PermissionsService,
     private readonly activity: ActivityService,
+    private readonly versions: VersionsService,
   ) {}
 
   async onModuleInit() {
@@ -55,11 +58,19 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
         },
         store: async ({ documentName, state, document, lastContext }) => {
           try {
-            const ctx = lastContext as { userId?: string; ip?: string | null; userAgent?: string | null } | undefined;
+            const ctx = lastContext as { userId?: string; ip?: string | null; userAgent?: string | null; restoreNote?: string } | undefined;
             const userId = ctx?.userId;
             // The first save of an imported page only materialises the import (someone opened it), it isn't an edit.
             const [prev] = await this.db
-              .select({ importHtml: documents.importHtml, textContent: documents.textContent })
+              .select({
+                importHtml: documents.importHtml,
+                textContent: documents.textContent,
+                ydoc: documents.ydoc,
+                content: documents.content,
+                title: documents.title,
+                updatedById: documents.updatedById,
+                updatedAt: documents.updatedAt,
+              })
               .from(documents)
               .where(eq(documents.id, documentName));
             const json = yXmlFragmentToProsemirrorJSON(document.getXmlFragment('default')) as PMNode;
@@ -75,7 +86,27 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
                 updatedById: userId,
               })
               .where(eq(documents.id, documentName));
-            if (prev && prev.importHtml === null) {
+            // Page history. A failure here must never cost the save itself.
+            await this.versions
+              .snapshot({
+                documentId: documentName,
+                userId: userId ?? null,
+                state: { title: prev?.title ?? 'Untitled', ydoc: Buffer.from(state), content: json as unknown as Record<string, unknown>, textContent: text },
+                before:
+                  prev?.ydoc && prev.importHtml === null
+                    ? {
+                        title: prev.title,
+                        ydoc: prev.ydoc,
+                        content: prev.content ?? null,
+                        textContent: prev.textContent ?? '',
+                        authorId: prev.updatedById,
+                        at: prev.updatedAt,
+                      }
+                    : null,
+                note: ctx?.restoreNote,
+              })
+              .catch((err: Error) => this.logger.error(`Saving a version of ${documentName} failed: ${err.message}`));
+            if (prev && prev.importHtml === null && !ctx?.restoreNote) {
               this.activity.noteEdit(userId, documentName, {
                 before: prev.textContent ?? '',
                 after: text,
@@ -128,6 +159,27 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
     });
     await this.server.listen();
     this.logger.log(`Collaboration server listening on ws://0.0.0.0:${port}`);
+  }
+
+  /**
+   * Put a page back to an earlier version. Done through the live document, so everyone who has the page
+   * open sees it change at once and their next edits build on the restored text.
+   */
+  async restore(documentId: string, state: Buffer, userId: string, note: string) {
+    if (!this.server) throw new Error('The collaboration server is not running');
+    const source = new Y.Doc();
+    Y.applyUpdate(source, new Uint8Array(state));
+    const from = source.getXmlFragment('default');
+    const connection = await this.server.hocuspocus.openDirectConnection(documentId, { userId, restoreNote: note });
+    try {
+      await connection.transact((doc) => {
+        const target = doc.getXmlFragment('default');
+        target.delete(0, target.length);
+        target.insert(0, from.toArray().map((node) => (node as Y.XmlElement | Y.XmlText).clone()));
+      });
+    } finally {
+      await connection.disconnect();
+    }
   }
 
   async onApplicationShutdown() {

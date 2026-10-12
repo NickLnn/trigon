@@ -144,6 +144,12 @@ export function summary(e: ActivityEvent): string {
     case 'group.member_added':
     case 'group.member_removed':
       return show(d.member);
+    case 'version.restored':
+      return `to the version from ${show(d.version)}`;
+    case 'item.restored':
+      return Number(d.itemsRestored) > 1 ? `${d.itemsRestored} items` : d.location ? show(d.location) : '';
+    case 'item.purged':
+      return Number(d.itemsDeleted) > 1 ? `${d.itemsDeleted} items, for good` : 'for good';
     case 'review.requested':
       return show(d.reviewer) + (d.message ? ` · “${d.message}”` : '');
     case 'review.approved':

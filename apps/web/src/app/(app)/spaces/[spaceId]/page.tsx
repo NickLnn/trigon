@@ -2,7 +2,7 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import type { DocumentNode } from '@trigon/shared';
-import { ArrowLeft, ChevronRight, Plus, Upload } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Plus, Trash2, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useMemo, useState, type ReactNode } from 'react';
@@ -127,6 +127,11 @@ export default function SpacePage({ params }: { params: Promise<{ spaceId: strin
               <ArrowLeft className="size-5" />
             </button>
             <div className="flex items-center gap-1 [&_button]:text-navy-ink-2 [&_button:hover]:bg-navy-2">
+              {canEdit && (
+                <Link href={`/spaces/${spaceId}/trash`} className="press grid size-10 place-items-center rounded-full text-navy-ink-2 hover:bg-navy-2" aria-label="Trash" title="Trash">
+                  <Trash2 className="size-5" />
+                </Link>
+              )}
               {space && <SpaceActions space={space} triggerClassName="size-10 rounded-full" />}
               {canEdit && (
                 <button onClick={() => setCreateOpen(true)} className="press grid size-10 place-items-center rounded-full" aria-label="Create">
