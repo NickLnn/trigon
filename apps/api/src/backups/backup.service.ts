@@ -31,6 +31,12 @@ export function parseBackupName(name: string): Pick<BackupFile, 'name' | 'create
   return { name, createdAt: new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])).toISOString(), trigger: m[7] as BackupFile['trigger'] };
 }
 
+/** Drop `destination` (the single choice before several destinations existed) so it never round-trips. */
+function withoutLegacy(s: BackupSettings): BackupSettings {
+  const { destination: _legacy, ...rest } = s as BackupSettings & { destination?: unknown };
+  return rest;
+}
+
 const DEST_ORDER: BackupDestination[] = ['local', 'nfs', 'smb', 'gdrive'];
 
 const GDRIVE_STEPS = ['Sign in with Google', 'Create the backup folder in your Drive', 'Save the connection in Trigon'];
@@ -124,7 +130,7 @@ export class BackupService implements OnModuleInit {
     }
     const files = [...byName.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return {
-      settings: { ...s, destinations: selectedDestinations(s) },
+      settings: withoutLegacy({ ...s, destinations: selectedDestinations(s) }),
       running: this.running,
       nextRun: this.nextRun(),
       files,
@@ -136,7 +142,7 @@ export class BackupService implements OnModuleInit {
   /** Save, filling in the Google Drive folder (found or created) when its name changed. */
   async save(form: BackupSettings, userId: string) {
     const current = await this.settings.get('backup');
-    const next: Partial<BackupSettings> = { ...(form.destinations.includes('smb') ? normalizeSmb(form) : form) };
+    const next: Partial<BackupSettings> & { destination?: undefined } = { ...(form.destinations.includes('smb') ? normalizeSmb(form) : form), destination: undefined };
     const folderName = (form.gdriveFolderName || 'Trigon Backups').trim();
     next.gdriveFolderName = folderName;
     const clientChanged = !!form.gdriveClientId && form.gdriveClientId !== current.gdriveClientId;

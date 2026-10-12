@@ -361,8 +361,26 @@ export default function BackupsSettingsPage() {
   }, [data, form]);
 
   const payload = () => {
-    const { hasSmbPassword: _h, lastRun: _l, hasGdriveClientSecret: _gs, hasGdriveRefreshToken: _gt, gdriveAccount: _ga, gdriveFolderId: _gf, gdriveRefreshToken: _gr, ...rest } = form!;
-    return rest;
+    // Only what the form edits — read-only and old fields (like the former single `destination`) stay out.
+    const f = form!;
+    return {
+      enabled: f.enabled,
+      schedule: f.schedule,
+      keep: f.keep,
+      destinations: f.destinations,
+      localPath: f.localPath,
+      nfsServer: f.nfsServer,
+      nfsExport: f.nfsExport,
+      smbHost: f.smbHost,
+      smbShare: f.smbShare,
+      smbPath: f.smbPath,
+      smbUser: f.smbUser,
+      smbDomain: f.smbDomain,
+      smbPassword: f.smbPassword,
+      gdriveClientId: f.gdriveClientId,
+      gdriveClientSecret: f.gdriveClientSecret,
+      gdriveFolderName: f.gdriveFolderName,
+    };
   };
   const save = useMutation({
     mutationFn: () => api<BackupOverview>('/backups/settings', { method: 'PUT', json: payload() }),
