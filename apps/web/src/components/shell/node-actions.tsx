@@ -184,7 +184,8 @@ export function NodeActions({
         body={
           <>
             <b>{node.title}</b>
-            {node.children?.length ? ` and the ${node.children.length} item${node.children.length === 1 ? '' : 's'} inside it` : ''} will be removed.
+            {node.children?.length ? ` and the ${node.children.length} item${node.children.length === 1 ? '' : 's'} inside it` : ''} will be moved to the
+            space&apos;s trash. You can restore {node.children?.length ? 'them' : 'it'} from there for 30 days.
           </>
         }
         action="Delete"
@@ -246,6 +247,9 @@ export function SpaceActions({ space, triggerClassName = '' }: { space: SpaceSum
             </Item>
             <Item icon={<FileOutput className="size-4" />} onSelect={() => setDialog('export')}>
               Export space…
+            </Item>
+            <Item icon={<Trash2 className="size-4" />} onSelect={() => router.push(`/spaces/${space.id}/trash`)}>
+              Trash
             </Item>
             <Menu.Separator className="my-1 h-px bg-line" />
             <Item icon={<Trash2 className="size-4" />} danger onSelect={() => setDialog('delete')}>
