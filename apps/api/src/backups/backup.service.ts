@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import type { BackupDestination, BackupDestinationStatus, BackupFile, BackupOverview, BackupRunResult, BackupSettings, GdriveConnectStatus } from '@trigon/shared';
+import type { BackupDestination, BackupDestinationStatus, BackupFile, BackupOverview, BackupRunResult, BackupSettings } from '@trigon/shared';
 import { CronJob } from 'cron';
 import { cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,7 +8,6 @@ import { join, resolve } from 'node:path';
 import { ActivityService } from '../activity/activity.service';
 import { SettingsService } from '../settings/settings.service';
 import { BACKUP_NAME, destinationFor, nfsCompose, normalizeSmb, run, selectedDestinations, type Destination } from './destinations';
-import { accessToken, deviceCode, ensureFolder, pollDeviceToken, revoke, type DeviceCode } from './gdrive';
 
 const JOB = 'trigon-backup';
 const FORMAT = 1;
@@ -37,20 +36,18 @@ function withoutLegacy(s: BackupSettings): BackupSettings {
   return rest;
 }
 
-const DEST_ORDER: BackupDestination[] = ['local', 'nfs', 'smb', 'gdrive'];
+const DEST_ORDER: BackupDestination[] = ['local', 'nfs', 'smb'];
 
-const GDRIVE_STEPS = ['Sign in with Google', 'Create the backup folder in your Drive', 'Save the connection in Trigon'];
 
 /**
  * Backups of everything Trigon stores: one .tar.gz with a PostgreSQL dump (pg_dump custom format) and the
- * uploaded files, copied to every selected destination (this server, SMB, NFS, Google Drive). Runs on a
+ * uploaded files, copied to every selected destination (this server, SMB, NFS). Runs on a
  * schedule, keeps the newest N per destination, and restores (after taking a safety backup first).
  */
 @Injectable()
 export class BackupService implements OnModuleInit {
   private readonly logger = new Logger(BackupService.name);
   private running: BackupOverview['running'] = null;
-  private gdrive: GdriveConnectStatus = { state: 'idle', steps: GDRIVE_STEPS.map((label) => ({ label, done: false })) };
 
   constructor(
     private readonly settings: SettingsService,
@@ -139,18 +136,8 @@ export class BackupService implements OnModuleInit {
     };
   }
 
-  /** Save, filling in the Google Drive folder (found or created) when its name changed. */
   async save(form: BackupSettings, userId: string) {
-    const current = await this.settings.get('backup');
     const next: Partial<BackupSettings> & { destination?: undefined } = { ...(form.destinations.includes('smb') ? normalizeSmb(form) : form), destination: undefined };
-    const folderName = (form.gdriveFolderName || 'Trigon Backups').trim();
-    next.gdriveFolderName = folderName;
-    const clientChanged = !!form.gdriveClientId && form.gdriveClientId !== current.gdriveClientId;
-    if (clientChanged) Object.assign(next, { gdriveRefreshToken: null as unknown as string, gdriveAccount: null, gdriveFolderId: null });
-    if (!clientChanged && current.gdriveRefreshToken && (folderName !== current.gdriveFolderName || !current.gdriveFolderId)) {
-      const token = await accessToken(current.gdriveClientId, current.gdriveClientSecret ?? '', current.gdriveRefreshToken);
-      next.gdriveFolderId = await ensureFolder(token, folderName);
-    }
     await this.settings.update('backup', next, userId);
   }
 
@@ -161,7 +148,6 @@ export class BackupService implements OnModuleInit {
       ...stored,
       ...form,
       smbPassword: form.smbPassword || stored.smbPassword,
-      gdriveClientSecret: form.gdriveClientSecret || stored.gdriveClientSecret,
     };
     const results = await Promise.all((await this.targets(merged)).map((t) => this.status(t.key, t.dest)));
     const bad = results.filter((r) => !r.ok);
@@ -172,7 +158,7 @@ export class BackupService implements OnModuleInit {
         .map((r) =>
           r.ok
             ? `Trigon can write to ${r.label}.${r.freeBytes != null ? ` ${(r.freeBytes / 1024 ** 3).toFixed(1)} GB free.` : ''}`
-            : r.message.startsWith(r.label) || /^(SMB|Google Drive):/.test(r.message)
+            : r.message.startsWith(r.label) || /^SMB:/.test(r.message)
               ? r.message
               : `${r.label}: ${r.message}`,
         )
@@ -338,73 +324,5 @@ export class BackupService implements OnModuleInit {
       this.running = null;
       await rm(work, { recursive: true, force: true });
     }
-  }
-
-  // ─── Google Drive connection (device sign-in: a code entered at google.com/device) ───
-
-  gdriveStatus(): GdriveConnectStatus {
-    return this.gdrive;
-  }
-
-  private gdriveStep(index: number) {
-    this.gdrive = { ...this.gdrive, steps: this.gdrive.steps.map((st, i) => ({ ...st, done: i <= index })) };
-  }
-
-  /** Save the OAuth client (when given), ask Google for a code, and finish in the background once it is approved. */
-  async gdriveStart(userId: string, clientId?: string, clientSecret?: string): Promise<GdriveConnectStatus> {
-    if (this.gdrive.state === 'waiting_for_sign_in' || this.gdrive.state === 'working') return this.gdrive;
-    if (clientId || clientSecret) {
-      const patch: Partial<BackupSettings> = {};
-      if (clientId) patch.gdriveClientId = clientId.trim();
-      if (clientSecret) patch.gdriveClientSecret = clientSecret.trim();
-      await this.settings.update('backup', patch, userId);
-    }
-    const s = await this.settings.get('backup');
-    if (!s.gdriveClientId || !s.gdriveClientSecret) throw new BadRequestException('Enter the client ID and client secret from Google Cloud Console.');
-    this.gdrive = { state: 'waiting_for_sign_in', steps: GDRIVE_STEPS.map((label) => ({ label, done: false })) };
-    let code: DeviceCode;
-    try {
-      code = await deviceCode(s.gdriveClientId);
-    } catch (err) {
-      this.gdrive = { ...this.gdrive, state: 'error', message: (err as Error).message };
-      return this.gdrive;
-    }
-    this.gdrive = {
-      ...this.gdrive,
-      userCode: code.userCode,
-      verificationUrl: code.verificationUrl,
-      expiresAt: new Date(Date.now() + code.expiresIn * 1000).toISOString(),
-    };
-    void (async () => {
-      try {
-        const { refreshToken, accessToken: token, email } = await pollDeviceToken(s.gdriveClientId, s.gdriveClientSecret ?? '', code);
-        this.gdrive = { ...this.gdrive, state: 'working', userCode: undefined };
-        this.gdriveStep(0);
-        const folderName = s.gdriveFolderName || 'Trigon Backups';
-        const folderId = await ensureFolder(token, folderName);
-        this.gdriveStep(1);
-        const current = await this.settings.get('backup');
-        const destinations = [...new Set([...selectedDestinations(current), 'gdrive' as const])];
-        await this.settings.update('backup', { gdriveRefreshToken: refreshToken, gdriveAccount: email, gdriveFolderId: folderId, gdriveFolderName: folderName, destinations }, userId);
-        this.gdriveStep(2);
-        this.activity.record({ action: 'settings.updated', actorId: userId, target: { type: 'settings', id: null, name: 'Backups' }, details: { fields: ['Google Drive connected'] } });
-        this.gdrive = { ...this.gdrive, state: 'done', message: `Connected${email ? ` as ${email}` : ''}. Backups go to My Drive › ${folderName}.` };
-      } catch (err) {
-        this.gdrive = { ...this.gdrive, state: 'error', userCode: undefined, message: (err as Error).message };
-      }
-    })();
-    return this.gdrive;
-  }
-
-  async gdriveDisconnect(userId: string) {
-    const s = await this.settings.get('backup');
-    if (s.gdriveRefreshToken) await revoke(s.gdriveRefreshToken);
-    const remaining = selectedDestinations(s).filter((d) => d !== 'gdrive');
-    await this.settings.update(
-      'backup',
-      { gdriveRefreshToken: null as unknown as string, gdriveAccount: null, gdriveFolderId: null, destinations: remaining.length ? remaining : ['local'] },
-      userId,
-    );
-    this.gdrive = { state: 'idle', steps: GDRIVE_STEPS.map((label) => ({ label, done: false })) };
   }
 }

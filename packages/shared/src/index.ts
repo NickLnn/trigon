@@ -486,7 +486,7 @@ export interface SyncSourceStatus {
 }
 
 /** Where backups go: a folder on this server, an SMB share, or an NFS export mounted into the container. */
-export const BACKUP_DESTINATIONS = ['local', 'smb', 'nfs', 'gdrive'] as const;
+export const BACKUP_DESTINATIONS = ['local', 'smb', 'nfs'] as const;
 export type BackupDestination = (typeof BACKUP_DESTINATIONS)[number];
 
 export interface BackupSettings {
@@ -511,17 +511,6 @@ export interface BackupSettings {
   smbDomain: string;
   smbPassword?: string;
   hasSmbPassword?: boolean;
-  /** Google Drive: the admin's own OAuth client (Google Cloud Console → Credentials → OAuth client ID, type Web). */
-  gdriveClientId: string;
-  gdriveClientSecret?: string;
-  hasGdriveClientSecret?: boolean;
-  /** Folder in My Drive, created by Trigon when missing. */
-  gdriveFolderName: string;
-  /** Set by "Connect Google Drive" (read-only). */
-  gdriveFolderId?: string | null;
-  gdriveAccount?: string | null;
-  gdriveRefreshToken?: string;
-  hasGdriveRefreshToken?: boolean;
   /** Result of the last run (read-only). */
   lastRun?: BackupRunResult | null;
 }
@@ -543,16 +532,6 @@ export interface BackupFile {
   trigger: BackupRunResult['trigger'];
   /** Destinations that hold a copy. */
   locations: BackupDestination[];
-}
-
-/** "Connect Google Drive" (device sign-in), polled by the pop-up. */
-export interface GdriveConnectStatus {
-  state: 'idle' | 'waiting_for_sign_in' | 'working' | 'done' | 'error';
-  userCode?: string;
-  verificationUrl?: string;
-  expiresAt?: string;
-  steps: { label: string; done: boolean }[];
-  message?: string;
 }
 
 export interface BackupDestinationStatus {

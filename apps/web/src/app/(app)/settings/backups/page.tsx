@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { BackupDestination, BackupFile, BackupOverview, BackupSettings, GdriveConnectStatus } from '@trigon/shared';
+import type { BackupDestination, BackupFile, BackupOverview, BackupSettings } from '@trigon/shared';
 import { Check, CircleCheck, Copy, Download, ExternalLink, HardDrive, Loader2, Network, RotateCcw, Server, ShieldCheck, Trash2, Unplug } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
@@ -16,26 +16,12 @@ const PRESETS = [
 ];
 const KEEP = [3, 7, 14, 30, 60, 90];
 
-function GoogleDriveLogo({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 87.3 78" className={className} aria-hidden>
-      <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da" />
-      <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47" />
-      <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335" />
-      <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d" />
-      <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc" />
-      <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00" />
-    </svg>
-  );
-}
-
 const DESTINATIONS: { value: BackupDestination; label: string; hint: string; icon: ReactNode }[] = [
   { value: 'local', label: 'This server', hint: 'A folder next to Trigon on the NAS (data/backups). No setup.', icon: <HardDrive className="size-5" /> },
   { value: 'smb', label: 'SMB share', hint: 'A Windows / Synology / NAS share. Trigon connects with a user and password.', icon: <Network className="size-5" /> },
   { value: 'nfs', label: 'NFS share', hint: 'An NFS export, attached once in docker-compose.yml.', icon: <Server className="size-5" /> },
-  { value: 'gdrive', label: 'Google Drive', hint: 'Off-site copy in your Google Drive. Trigon only sees its own folder.', icon: <GoogleDriveLogo className="size-5" /> },
 ];
-const DEST_NAME: Record<BackupDestination, string> = { local: 'This server', smb: 'SMB', nfs: 'NFS', gdrive: 'Google Drive' };
+const DEST_NAME: Record<BackupDestination, string> = { local: 'This server', smb: 'SMB', nfs: 'NFS' };
 
 const size = (b: number | null | undefined) =>
   b == null ? '—' : b < 1024 ** 2 ? `${(b / 1024).toFixed(0)} KB` : b < 1024 ** 3 ? `${(b / 1024 ** 2).toFixed(1)} MB` : `${(b / 1024 ** 3).toFixed(2)} GB`;
@@ -64,219 +50,6 @@ function CopyBlock({ text }: { text: string }) {
         {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
       </button>
     </div>
-  );
-}
-
-/** "Connect Google Drive": set-up steps with direct links, then a code to enter at google.com/device. */
-function GoogleConnectSheet({ open, onOpenChange, stored, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; stored: BackupSettings; onDone: () => void }) {
-  const [clientId, setClientId] = useState(stored.gdriveClientId);
-  const [clientSecret, setClientSecret] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [started, setStarted] = useState(false);
-  const status = useQuery({
-    queryKey: ['gdrive-connect'],
-    queryFn: () => api<GdriveConnectStatus>('/backups/gdrive/connect'),
-    enabled: open && started,
-    refetchInterval: (q) => (q.state.data?.state === 'waiting_for_sign_in' || q.state.data?.state === 'working' ? 2000 : false),
-  });
-  const qc = useQueryClient();
-  const start = useMutation({
-    mutationFn: () => api<GdriveConnectStatus>('/backups/gdrive/connect', { method: 'POST', json: { clientId, clientSecret: clientSecret || undefined } }),
-    onSuccess: (s) => {
-      qc.setQueryData(['gdrive-connect'], s);
-      setStarted(true);
-    },
-  });
-  const s = started ? status.data : undefined;
-  useEffect(() => {
-    if (s?.state === 'done') onDone();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s?.state]);
-  useEffect(() => {
-    if (!open) return;
-    setStarted(false);
-    start.reset();
-    setClientId(stored.gdriveClientId);
-    setClientSecret('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-  const active = s?.state === 'waiting_for_sign_in' || s?.state === 'working';
-  const canStart = !!clientId.trim() && (!!clientSecret.trim() || !!stored.hasGdriveClientSecret);
-  const link = (href: string, text: string) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-accent">
-      {text} <ExternalLink className="size-3" />
-    </a>
-  );
-
-  const header = (
-    <div className="mb-4 flex items-center gap-3 rounded-2xl bg-surface-2/60 p-3">
-      <span className="grid size-11 place-items-center rounded-xl bg-white shadow-sm ring-1 ring-line">
-        <GoogleDriveLogo className="size-6" />
-      </span>
-      <span className="text-sm text-ink-2">
-        Trigon stores backups in <b className="text-ink">one folder of your Google Drive</b>, created for you. With Google&apos;s <b className="text-ink">drive.file</b> permission it can never see the rest of your Drive.
-      </span>
-    </div>
-  );
-
-  if (!s || s.state === 'idle') {
-    return (
-      <BottomSheet open={open} onOpenChange={onOpenChange} title="Connect Google Drive" description="One-time set-up in Google Cloud (about 5 minutes), then sign in with a code.">
-        {header}
-        <ol className="space-y-3 text-sm text-ink-2">
-          <li className="flex gap-3">
-            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent">1</span>
-            <span>
-              {link('https://console.cloud.google.com/projectcreate', 'Create a Google Cloud project')} named e.g. <b className="text-ink">Trigon</b> (free).
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent">2</span>
-            <span>
-              {link('https://console.cloud.google.com/apis/library/drive.googleapis.com', 'Enable the Google Drive API')} for that project.
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent">3</span>
-            <span>
-              {link('https://console.cloud.google.com/auth/overview', 'Google Auth Platform')} → <b className="text-ink">Get started</b>: app name <b className="text-ink">Trigon</b>, your email, audience <b className="text-ink">External</b>. Then under{' '}
-              <b className="text-ink">Audience</b> press <b className="text-ink">Publish app</b> — otherwise Google disconnects Trigon after 7 days. No Google review is needed for this permission.
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent">4</span>
-            <span>
-              {link('https://console.cloud.google.com/auth/clients/create', 'Create an OAuth client')} with application type <b className="text-ink">TVs and Limited Input devices</b>, name <b className="text-ink">Trigon</b>. Copy the
-              client ID and secret here:
-            </span>
-          </li>
-        </ol>
-        <div className="mt-4 space-y-3">
-          <Field label="Client ID">
-            <TextInput value={clientId} onChange={(e) => setClientId(e.target.value.trim())} placeholder="1234-abc.apps.googleusercontent.com" autoCapitalize="none" />
-          </Field>
-          <Field label="Client secret" hint={stored.hasGdriveClientSecret ? 'A secret is stored. Leave empty to keep it.' : 'Stored encrypted.'}>
-            <TextInput type="password" autoComplete="new-password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value.trim())} placeholder={stored.hasGdriveClientSecret ? '••••••••' : 'GOCSPX-…'} />
-          </Field>
-          {start.error && <Result result={{ ok: false, message: start.error.message }} />}
-          <Button className="w-full" disabled={!canStart} busy={start.isPending} onClick={() => start.mutate()}>
-            <GoogleDriveLogo className="size-4" /> Continue — sign in with Google
-          </Button>
-        </div>
-      </BottomSheet>
-    );
-  }
-
-  return (
-    <BottomSheet open={open} onOpenChange={onOpenChange} title="Connect Google Drive" description="Sign in with the Google account whose Drive should hold the backups.">
-      {header}
-      {s.state === 'waiting_for_sign_in' && s.userCode && (
-        <div className="rounded-2xl bg-surface-2 p-5 text-center">
-          <p className="text-sm text-ink-2">1. Open Google&apos;s device sign-in page</p>
-          <a
-            href={s.verificationUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="press mt-2 inline-flex items-center gap-2 rounded-pill bg-accent px-5 py-2.5 font-semibold text-accent-ink"
-          >
-            {(s.verificationUrl ?? 'google.com/device').replace(/^https?:\/\/(www\.)?/, '')} <ExternalLink className="size-4" />
-          </a>
-          <p className="mt-5 text-sm text-ink-2">2. Enter this code</p>
-          <button
-            onClick={() => {
-              navigator.clipboard?.writeText(s.userCode!);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            }}
-            className="press mt-2 inline-flex items-center gap-3 rounded-2xl bg-surface px-5 py-3 font-mono text-2xl font-bold tracking-[0.2em] shadow-card"
-          >
-            {s.userCode}
-            {copied ? <Check className="size-5 text-success" /> : <Copy className="size-5 text-ink-3" />}
-          </button>
-          <p className="mt-5 text-meta text-ink-3">3. Choose your Google account and allow access. If Google says the app isn&apos;t verified, choose Advanced → Go to Trigon — it&apos;s your own app. This page continues by itself.</p>
-        </div>
-      )}
-      <ol className="mt-5 space-y-2.5">
-        {s.steps.map((step, i) => {
-          const running = !step.done && (i === 0 || s.steps[i - 1].done) && active;
-          return (
-            <li key={step.label} className="flex items-center gap-3 text-sm">
-              <span className={`grid size-6 shrink-0 place-items-center rounded-full ${step.done ? 'bg-success text-white' : running ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-ink-3'}`}>
-                {step.done ? <Check className="size-3.5" /> : running ? <Loader2 className="size-3.5 animate-spin" /> : i + 1}
-              </span>
-              <span className={step.done ? '' : 'text-ink-2'}>{step.label}</span>
-            </li>
-          );
-        })}
-      </ol>
-      {s.state === 'done' && (
-        <div className="mt-5 space-y-3">
-          <Result result={{ ok: true, message: s.message ?? 'Connected.' }} />
-          <Button className="w-full" onClick={() => onOpenChange(false)}>
-            Done
-          </Button>
-        </div>
-      )}
-      {s.state === 'error' && (
-        <div className="mt-5 space-y-3">
-          <Result result={{ ok: false, message: s.message ?? 'Something went wrong' }} />
-          <Button onClick={() => setStarted(false)}>Try again</Button>
-        </div>
-      )}
-    </BottomSheet>
-  );
-}
-
-/** Google Drive in the "Where" card: connected state, or the button that opens the connect pop-up. */
-function GoogleDriveSection({
-  form,
-  set,
-  stored,
-  onChanged,
-}: {
-  form: BackupSettings;
-  set: (p: Partial<BackupSettings>) => void;
-  stored: BackupSettings;
-  onChanged: (fresh?: BackupOverview) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const connected = !!stored.hasGdriveRefreshToken && !!stored.gdriveFolderId;
-  const disconnect = useMutation({ mutationFn: () => api<BackupOverview>('/backups/gdrive/disconnect', { method: 'POST' }), onSuccess: (fresh) => onChanged(fresh) });
-
-  return (
-    <>
-      <h3 className="flex items-center gap-2 pt-2 text-sm font-bold">
-        <GoogleDriveLogo className="size-4" /> Google Drive
-      </h3>
-      {connected ? (
-        <>
-          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-success/10 px-4 py-3 text-sm">
-            <CircleCheck className="size-5 shrink-0 text-success" />
-            <span className="min-w-0 flex-1">
-              Connected{stored.gdriveAccount ? ` as ${stored.gdriveAccount}` : ''}. Backups go to <b>My Drive › {stored.gdriveFolderName}</b>.
-            </span>
-            <a href={`https://drive.google.com/drive/folders/${stored.gdriveFolderId}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-accent">
-              Open folder <ExternalLink className="size-3.5" />
-            </a>
-            <button type="button" onClick={() => disconnect.mutate()} className="inline-flex items-center gap-1 font-semibold text-ink-3 hover:text-danger">
-              <Unplug className="size-3.5" /> Disconnect
-            </button>
-          </div>
-          <Field label="Folder in My Drive" hint="Created automatically. Change the name and save to put new backups in another folder.">
-            <TextInput value={form.gdriveFolderName} onChange={(e) => set({ gdriveFolderName: e.target.value })} placeholder="Trigon Backups" />
-          </Field>
-        </>
-      ) : (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surface-2/60 px-4 py-3 text-sm">
-          <span className="min-w-0 flex-1 text-ink-2">Not connected yet. A short one-time set-up, then sign in with a code — the backup folder is created for you.</span>
-          <Button type="button" onClick={() => setOpen(true)}>
-            <GoogleDriveLogo className="size-4" /> Connect Google Drive
-          </Button>
-        </div>
-      )}
-      {disconnect.error && <Result result={{ ok: false, message: disconnect.error.message }} />}
-      <GoogleConnectSheet open={open} onOpenChange={setOpen} stored={stored} onDone={() => onChanged()} />
-    </>
   );
 }
 
@@ -355,7 +128,7 @@ export default function BackupsSettingsPage() {
 
   useEffect(() => {
     if (data && !form) {
-      setForm({ ...data.settings, smbPassword: '', gdriveClientSecret: '' });
+      setForm({ ...data.settings, smbPassword: '' });
       setCustom(!PRESETS.some((p) => p.cron === data.settings.schedule));
     }
   }, [data, form]);
@@ -377,9 +150,6 @@ export default function BackupsSettingsPage() {
       smbUser: f.smbUser,
       smbDomain: f.smbDomain,
       smbPassword: f.smbPassword,
-      gdriveClientId: f.gdriveClientId,
-      gdriveClientSecret: f.gdriveClientSecret,
-      gdriveFolderName: f.gdriveFolderName,
     };
   };
   const save = useMutation({
@@ -501,8 +271,8 @@ export default function BackupsSettingsPage() {
           </div>
         </SettingsCard>
 
-        <SettingsCard title="Where" description="Pick one or more. Each backup is copied to every place you choose — e.g. the NAS for quick restores and Google Drive off-site.">
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <SettingsCard title="Where" description="Pick one or more. Each backup is copied to every place you choose — e.g. this server for quick restores and an SMB share on another device.">
+          <div className="grid gap-2 sm:grid-cols-3">
             {DESTINATIONS.map((d) => {
               const on = form.destinations.includes(d.value);
               return (
@@ -517,7 +287,7 @@ export default function BackupsSettingsPage() {
                   className={`press relative rounded-2xl p-3.5 text-left ring-2 ${on ? 'bg-accent-soft/50 ring-accent' : 'bg-surface-2/60 ring-transparent hover:bg-surface-2'}`}
                 >
                   {on && <CircleCheck className="absolute right-3 top-3 size-5 text-accent" />}
-                  <span className={`grid size-10 place-items-center rounded-xl ${d.value === 'gdrive' ? 'bg-white ring-1 ring-line' : on ? 'bg-accent text-accent-ink' : 'bg-surface-3 text-ink-2'}`}>{d.icon}</span>
+                  <span className={`grid size-10 place-items-center rounded-xl ${on ? 'bg-accent text-accent-ink' : 'bg-surface-3 text-ink-2'}`}>{d.icon}</span>
                   <span className={`mt-3 block font-semibold ${on ? 'text-accent' : ''}`}>{d.label}</span>
                   <span className="mt-1 block text-meta text-ink-3">{d.hint}</span>
                 </button>
@@ -591,19 +361,6 @@ export default function BackupsSettingsPage() {
                   <p className="mt-2 text-meta text-ink-3">The export must allow writes from this NAS (Synology: Shared folder → NFS permissions → Read/Write, Squash: map all users to admin).</p>
                 </div>
               </>
-            )}
-
-            {form.destinations.includes('gdrive') && (
-              <GoogleDriveSection
-                form={form}
-                set={set}
-                stored={data.settings}
-                onChanged={(fresh) => {
-                  if (fresh) qc.setQueryData(['backups'], fresh);
-                  else qc.invalidateQueries({ queryKey: ['backups'] });
-                  setForm(null);
-                }}
-              />
             )}
           </div>
 
