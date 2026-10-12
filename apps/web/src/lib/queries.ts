@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { compareNodes, type DisplayStatus, type DocumentKind, type DocumentNode, type EffectiveGrant, type HealthStats, type PageType, type PermissionLevel, type SpaceStats, type SpaceSummary } from '@trigon/shared';
+import { treeComparator, type DisplayStatus, type DocumentKind, type DocumentNode, type EffectiveGrant, type HealthStats, type PageType, type PermissionLevel, type SpaceSort, type SpaceStats, type SpaceSummary } from '@trigon/shared';
 import { api } from './api';
 
 export interface RecentDoc {
@@ -138,14 +138,14 @@ export function useCreateSpace() {
   });
 }
 
-/** Move a node to another parent in the tree (drag & drop). */
+/** Move/reorder a node in the tree (drag & drop). */
 export function useMoveDocument() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, parentId, position }: { id: string; spaceId: string; parentId: string | null; position: number }) =>
+    mutationFn: ({ id, parentId, position }: { id: string; spaceId: string; sortMode: SpaceSort; parentId: string | null; position: number }) =>
       api(`/documents/${id}`, { method: 'PATCH', json: { parentId, position } }),
     // Optimistic: reshape the cached tree immediately so the drop feels instant.
-    onMutate: async ({ id, spaceId, parentId, position }) => {
+    onMutate: async ({ id, spaceId, sortMode, parentId, position }) => {
       await qc.cancelQueries({ queryKey: ['tree', spaceId] });
       const prev = qc.getQueryData<DocumentNode[]>(['tree', spaceId]);
       if (prev) {
@@ -153,7 +153,7 @@ export function useMoveDocument() {
         const walk = (ns: DocumentNode[]) => ns.forEach((n) => (flat.push({ ...n, children: undefined }), n.children && walk(n.children)));
         walk(prev);
         const moved = flat.map((n) => (n.id === id ? { ...n, parentId, position } : n));
-        qc.setQueryData(['tree', spaceId], buildTree(moved));
+        qc.setQueryData(['tree', spaceId], buildTree(moved, sortMode));
       }
       return { prev };
     },
@@ -162,15 +162,16 @@ export function useMoveDocument() {
   });
 }
 
-export function buildTree(rows: DocumentNode[]): DocumentNode[] {
+export function buildTree(rows: DocumentNode[], mode: SpaceSort = 'alpha'): DocumentNode[] {
   const byId = new Map(rows.map((r) => [r.id, { ...r, children: [] as DocumentNode[] }]));
   const roots: DocumentNode[] = [];
   for (const node of byId.values()) {
     const parent = node.parentId ? byId.get(node.parentId) : undefined;
     (parent ? parent.children : roots).push(node);
   }
+  const compare = treeComparator(mode);
   const sort = (list: DocumentNode[]) => {
-    list.sort(compareNodes);
+    list.sort(compare);
     list.forEach((n) => sort(n.children ?? []));
   };
   sort(roots);

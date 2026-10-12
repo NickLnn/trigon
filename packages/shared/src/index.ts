@@ -51,6 +51,10 @@ export interface AuthConfig {
   ldap: { enabled: boolean };
 }
 
+/** How a space orders its tree: alphabetically, or by hand with drag & drop. */
+export const SPACE_SORTS = ['alpha', 'manual'] as const;
+export type SpaceSort = (typeof SPACE_SORTS)[number];
+
 export interface SpaceSummary {
   id: string;
   name: string;
@@ -58,6 +62,7 @@ export interface SpaceSummary {
   icon: string | null;
   color: string | null;
   description: string | null;
+  sortMode: SpaceSort;
   myPermission: PermissionLevel;
 }
 
@@ -87,9 +92,16 @@ export interface DocumentNode {
 
 const titleCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-/** Tree order: alphabetical by title, case-insensitive, with numbers in natural order ("2" before "10"). */
-export function compareNodes(a: Pick<DocumentNode, 'title' | 'id'>, b: Pick<DocumentNode, 'title' | 'id'>): number {
+type Sortable = Pick<DocumentNode, 'title' | 'id' | 'position'>;
+
+/** Alphabetical by title, case-insensitive, with numbers in natural order ("2" before "10"). */
+export function compareNodes(a: Sortable, b: Sortable): number {
   return titleCollator.compare(a.title.trim(), b.title.trim()) || a.id.localeCompare(b.id);
+}
+
+/** Sibling order for a space's tree: alphabetical, or by drag & drop position (title breaks ties). */
+export function treeComparator(mode: SpaceSort): (a: Sortable, b: Sortable) => number {
+  return mode === 'manual' ? (a, b) => a.position - b.position || compareNodes(a, b) : compareNodes;
 }
 
 export interface HealthStats {

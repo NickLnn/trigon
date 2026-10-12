@@ -1,7 +1,7 @@
 'use client';
 
 import { useQueryClient } from '@tanstack/react-query';
-import type { DocumentNode } from '@trigon/shared';
+import type { DocumentNode, SpaceSort } from '@trigon/shared';
 import { ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState, type DragEvent } from 'react';
@@ -11,8 +11,11 @@ import { importFiles } from '@/lib/importer';
 import { findPath, useMoveDocument, useTree } from '@/lib/queries';
 import { NodeActions } from './node-actions';
 
-/** 'inside' nests under the row; 'beside' (file rows) lands next to it, in the same parent. Order is always alphabetical. */
-type Zone = 'inside' | 'beside';
+/**
+ * 'inside' nests under the row. In a manually sorted space 'before'/'after' reorder around it; in an
+ * alphabetical space a file row takes 'beside' instead (same parent, the sort decides where it lands).
+ */
+type Zone = 'before' | 'inside' | 'after' | 'beside';
 
 /** What is being dragged (dataTransfer can't be read during dragover, so keep it here). */
 let dragging: { id: string; spaceId: string; blocked: Set<string> } | null = null;
@@ -52,9 +55,10 @@ interface NodeProps {
   setHover: (h: { id: string; zone: Zone } | null) => void;
   onDrop: (target: DocumentNode, siblings: DocumentNode[], zone: Zone, e: DragEvent) => void;
   canEdit: boolean;
+  manual: boolean;
 }
 
-function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, setHover, onDrop, canEdit }: NodeProps) {
+function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, setHover, onDrop, canEdit, manual }: NodeProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const hasChildren = !!node.children?.length;
   const open = openIds.has(node.id);
@@ -62,7 +66,15 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
   const isFolder = node.kind === 'folder';
   const zone = hover?.id === node.id ? hover.zone : null;
 
-  const zoneFor = (): Zone => (node.kind === 'file' ? 'beside' : 'inside');
+  const zoneFor = (e: DragEvent): Zone => {
+    if (!manual) return node.kind === 'file' ? 'beside' : 'inside';
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = (e.clientY - rect.top) / rect.height;
+    if (node.kind === 'file') return y < 0.5 ? 'before' : 'after';
+    if (y < 0.28) return 'before';
+    if (y > 0.72) return 'after';
+    return 'inside';
+  };
 
   const dnd = {
     draggable: canEdit,
@@ -81,7 +93,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = files ? 'copy' : 'move';
-      const z = zoneFor();
+      const z = zoneFor(e);
       if (hover?.id !== node.id || hover.zone !== z) setHover({ id: node.id, zone: z });
     },
     onDragLeave: (e: DragEvent) => {
@@ -90,7 +102,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
     onDrop: (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      onDrop(node, siblings, zoneFor(), e);
+      onDrop(node, siblings, zoneFor(e), e);
       setHover(null);
     },
   };
@@ -118,9 +130,15 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
   const cls = `relative flex w-full items-center gap-1.5 rounded-lg py-1 pr-8 text-[0.875rem] ${
     zone === 'inside' ? 'bg-navy-3 text-white ring-2 ring-accent' : active ? 'bg-navy-3 font-medium text-white' : 'text-navy-ink-2 hover:bg-navy-2 hover:text-white'
   }`;
-  const indicator = zone === 'beside' ? (
-    <span className="pointer-events-none absolute inset-0 rounded-lg ring-1 ring-accent/60" />
-  ) : null;
+  const indicator =
+    zone === 'before' || zone === 'after' ? (
+      <span
+        className="pointer-events-none absolute right-1 h-0.5 rounded-full bg-accent"
+        style={{ left: 12 + depth * 18, [zone === 'before' ? 'top' : 'bottom']: -1 }}
+      />
+    ) : zone === 'beside' ? (
+      <span className="pointer-events-none absolute inset-0 rounded-lg ring-1 ring-accent/60" />
+    ) : null;
 
   return (
     <li>
@@ -161,6 +179,7 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
               setHover={setHover}
               onDrop={onDrop}
               canEdit={canEdit}
+              manual={manual}
             />
           ))}
         </ul>
@@ -169,8 +188,30 @@ function TreeNode({ node, siblings, depth, activeId, openIds, toggle, hover, set
   );
 }
 
+/** Position between neighbours so only the moved row is written. */
+function positionFor(target: DocumentNode, siblings: DocumentNode[], zone: 'before' | 'after', movingId: string) {
+  const list = siblings.filter((s) => s.id !== movingId);
+  const i = list.findIndex((s) => s.id === target.id);
+  if (zone === 'before') {
+    const prev = list[i - 1];
+    return prev ? (prev.position + target.position) / 2 : target.position - 1;
+  }
+  const next = list[i + 1];
+  return next ? (target.position + next.position) / 2 : target.position + 1;
+}
+
 /** Desktop sidebar tree for one space, with drag & drop; auto-expands to reveal the open document. */
-export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: string; activeId?: string; canEdit?: boolean }) {
+export function SpaceTree({
+  spaceId,
+  sortMode,
+  activeId,
+  canEdit = true,
+}: {
+  spaceId: string;
+  sortMode: SpaceSort;
+  activeId?: string;
+  canEdit?: boolean;
+}) {
   const qc = useQueryClient();
   const { data, isPending } = useTree(spaceId);
   const move = useMoveDocument();
@@ -213,10 +254,12 @@ export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: stri
     }
     if (!dragging || dragging.blocked.has(target.id)) return;
     const id = dragging.id;
-    const dest = zone === 'inside' ? (target.children ?? []) : siblings;
-    const position = Math.max(0, ...dest.filter((c) => c.id !== id).map((c) => c.position)) + 1;
+    const position =
+      zone === 'before' || zone === 'after'
+        ? positionFor(target, siblings, zone, id)
+        : Math.max(0, ...(zone === 'inside' ? (target.children ?? []) : siblings).filter((c) => c.id !== id).map((c) => c.position)) + 1;
     if (zone === 'inside') setOpenIds((s) => new Set([...s, target.id]));
-    move.mutate({ id, spaceId, parentId, position });
+    move.mutate({ id, spaceId, sortMode, parentId, position });
   };
 
   if (isPending) {
@@ -244,6 +287,7 @@ export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: stri
           setHover={setHover}
           onDrop={onDrop}
           canEdit={canEdit}
+          manual={sortMode === 'manual'}
         />
       ))}
     </ul>
@@ -251,7 +295,7 @@ export function SpaceTree({ spaceId, activeId, canEdit = true }: { spaceId: stri
 }
 
 /** Drop target for a whole space (its header / empty area): moves items to the root or uploads files there. */
-export function useSpaceRootDrop(spaceId: string) {
+export function useSpaceRootDrop(spaceId: string, sortMode: SpaceSort) {
   const qc = useQueryClient();
   const move = useMoveDocument();
   const [over, setOver] = useState(false);
@@ -285,7 +329,7 @@ export function useSpaceRootDrop(spaceId: string) {
           await dropFiles(Array.from(e.dataTransfer.files), spaceId, null);
         } else if (dragging && dragging.spaceId === spaceId) {
           const roots = qc.getQueryData<DocumentNode[]>(['tree', spaceId]) ?? [];
-          move.mutate({ id: dragging.id, spaceId, parentId: null, position: Math.max(0, ...roots.map((r) => r.position)) + 1 });
+          move.mutate({ id: dragging.id, spaceId, sortMode, parentId: null, position: Math.max(0, ...roots.map((r) => r.position)) + 1 });
           return;
         }
         qc.invalidateQueries({ queryKey: ['tree', spaceId] });

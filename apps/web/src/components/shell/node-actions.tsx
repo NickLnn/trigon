@@ -3,7 +3,7 @@
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import { useQueryClient } from '@tanstack/react-query';
 import type { DocumentNode, SpaceSummary } from '@trigon/shared';
-import { Download, FileOutput, FilePlus2, MoreHorizontal, Pencil, Share2, Smile, Trash2 } from 'lucide-react';
+import { ArrowDownAZ, Download, FileOutput, GripVertical, FilePlus2, MoreHorizontal, Pencil, Share2, Smile, Trash2 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
@@ -201,7 +201,7 @@ export function NodeActions({
   );
 }
 
-/** "⋯" menu for a space: rename, icon, delete (space managers only). */
+/** "⋯" menu for a space: rename, icon, sort order, delete (space managers only). */
 export function SpaceActions({ space, triggerClassName = '' }: { space: SpaceSummary; triggerClassName?: string }) {
   const qc = useQueryClient();
   const router = useRouter();
@@ -210,6 +210,7 @@ export function SpaceActions({ space, triggerClassName = '' }: { space: SpaceSum
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['spaces'] });
     qc.invalidateQueries({ queryKey: ['space', space.id] });
+    qc.invalidateQueries({ queryKey: ['tree', space.id] });
   };
   const patch = (body: Record<string, unknown>) => api(`/spaces/${space.id}`, { method: 'PATCH', json: body }).then(refresh);
 
@@ -231,6 +232,15 @@ export function SpaceActions({ space, triggerClassName = '' }: { space: SpaceSum
             <Item icon={<Smile className="size-4" />} onSelect={() => setDialog('icon')}>
               Change icon
             </Item>
+            {space.sortMode === 'manual' ? (
+              <Item icon={<ArrowDownAZ className="size-4" />} onSelect={() => patch({ sortMode: 'alpha' })}>
+                Sort A–Z
+              </Item>
+            ) : (
+              <Item icon={<GripVertical className="size-4" />} onSelect={() => patch({ sortMode: 'manual' })}>
+                Sort manually (drag &amp; drop)
+              </Item>
+            )}
             <Item icon={<Share2 className="size-4" />} onSelect={() => setDialog('share')}>
               Members and permissions
             </Item>

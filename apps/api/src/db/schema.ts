@@ -38,6 +38,7 @@ export const documentKind = pgEnum('document_kind', ['folder', 'page', 'file']);
 export const pageType = pgEnum('page_type', ['page', 'runbook', 'kb']);
 export const docStatus = pgEnum('doc_status', ['none', 'draft', 'verified']);
 export const resourceType = pgEnum('resource_type', ['space', 'document']);
+export const spaceSort = pgEnum('space_sort', ['alpha', 'manual']);
 export const subjectType = pgEnum('subject_type', ['user', 'group', 'everyone']);
 
 /**
@@ -142,6 +143,7 @@ export const spaces = pgTable(
     description: text('description'),
     icon: text('icon'),
     color: text('color'),
+    sortMode: spaceSort('sort_mode').notNull().default('alpha'),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
     ...timestamps,
   },
