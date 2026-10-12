@@ -164,4 +164,10 @@ export class SettingsService {
   appUrl(): string {
     return this.config.get<string>('APP_URL') ?? 'http://localhost:3000';
   }
+
+  /** The address to put in emails: the public HTTPS one people sign in at, else APP_URL. */
+  async publicUrl(): Promise<string> {
+    const origins = (await this.get('entra')).signInOrigins ?? [];
+    return origins.find((o) => o.startsWith('https://')) ?? this.appUrl();
+  }
 }

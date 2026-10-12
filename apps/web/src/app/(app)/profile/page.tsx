@@ -4,6 +4,7 @@ import { Activity, ChevronRight, Download, LogOut, Monitor, Moon, Settings, Sun 
 import { OPEN_INSTALL_EVENT } from '@/components/ui/install-prompt';
 import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
+import { NotificationPrefsSection } from '@/components/shell/notification-prefs';
 import { PageHeader } from '@/components/shell/page-header';
 import { Avatar } from '@/components/ui/avatar';
 import { useSession, useSignOut } from '@/lib/session';
@@ -77,6 +78,11 @@ export default function ProfilePage() {
             ))}
           </div>
         </Group>
+
+        <section>
+          <h2 className="mb-2 px-1 text-meta font-semibold uppercase tracking-wider text-ink-3">Email notifications</h2>
+          <NotificationPrefsSection />
+        </section>
 
         {user.role === 'admin' && (
           <Group title="Administration">

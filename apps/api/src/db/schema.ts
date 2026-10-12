@@ -1,3 +1,4 @@
+import type { NotificationPrefs } from '@trigon/shared';
 import { relations, sql } from 'drizzle-orm';
 import {
   boolean,
@@ -58,6 +59,8 @@ export const users = pgTable(
     /** False when the directory reports the account as disabled/removed. */
     active: boolean('active').notNull().default(true),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    /** Email notification choices (Profile → Notifications); missing keys use the defaults. */
+    notificationPrefs: jsonb('notification_prefs').$type<Partial<NotificationPrefs>>().notNull().default(sql`'{}'::jsonb`),
     ...timestamps,
   },
   (t) => [uniqueIndex('users_email_lower_uq').on(sql`lower(${t.email})`)],

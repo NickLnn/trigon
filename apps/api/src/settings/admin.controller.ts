@@ -18,6 +18,7 @@ import type { AdminGroup, AdminUser, AuthProvider, SystemRole } from '@trigon/sh
 import { IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { and, asc, count, desc, eq, ilike, isNull, ne, or, sql } from 'drizzle-orm';
 import { ActivityService } from '../activity/activity.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { accounts, groupMembers, groups, refreshTokens, users } from '../db/schema';
@@ -57,6 +58,7 @@ export class AdminController {
     @InjectDb() private readonly db: Database,
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   @Get('users')
@@ -92,6 +94,7 @@ export class AdminController {
     const user = await this.identity.createLocal(dto.email.trim(), dto.displayName.trim(), await hash(dto.password));
     if (dto.role !== user.role) await this.db.update(users).set({ role: dto.role }).where(eq(users.id, user.id));
     this.activity.record({ action: 'user.created', actorId: me.id, target: { type: 'user', id: user.id, name: user.displayName }, details: { email: user.email, role: dto.role } });
+    this.notifications.account(user.id, me.id, { kind: 'created', role: dto.role });
     return { id: user.id };
   }
 
@@ -124,6 +127,8 @@ export class AdminController {
     if (Object.keys(changes).length) {
       this.activity.record({ action: 'user.updated', actorId: me.id, target: { type: 'user', id, name: before.displayName }, details: { changes } });
     }
+    if (changes.role) this.notifications.account(id, me.id, { kind: 'role', from: before.role, to: dto.role! });
+    if (changes.active) this.notifications.account(id, me.id, { kind: dto.active ? 'reactivated' : 'deactivated' });
     if (dto.active === false) {
       // Sign the user out everywhere.
       await this.db.update(refreshTokens).set({ revokedAt: new Date() }).where(and(eq(refreshTokens.userId, id), isNull(refreshTokens.revokedAt)));
@@ -142,6 +147,7 @@ export class AdminController {
     else await this.db.insert(accounts).values({ userId: id, provider: 'local', providerAccountId: user.email.toLowerCase(), passwordHash });
     await this.db.update(refreshTokens).set({ revokedAt: new Date() }).where(and(eq(refreshTokens.userId, id), isNull(refreshTokens.revokedAt)));
     this.activity.record({ action: 'user.password_set', actorId: me.id, target: { type: 'user', id, name: user.displayName } });
+    this.notifications.account(id, me.id, { kind: 'password' });
     return { ok: true };
   }
 
