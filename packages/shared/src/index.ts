@@ -85,6 +85,13 @@ export interface DocumentNode {
   children?: DocumentNode[];
 }
 
+const titleCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+/** Tree order: alphabetical by title, case-insensitive, with numbers in natural order ("2" before "10"). */
+export function compareNodes(a: Pick<DocumentNode, 'title' | 'id'>, b: Pick<DocumentNode, 'title' | 'id'>): number {
+  return titleCollator.compare(a.title.trim(), b.title.trim()) || a.id.localeCompare(b.id);
+}
+
 export interface HealthStats {
   total: number;
   verified: number;

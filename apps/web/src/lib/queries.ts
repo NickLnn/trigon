@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DisplayStatus, DocumentKind, DocumentNode, EffectiveGrant, HealthStats, PageType, PermissionLevel, SpaceStats, SpaceSummary } from '@trigon/shared';
+import { compareNodes, type DisplayStatus, type DocumentKind, type DocumentNode, type EffectiveGrant, type HealthStats, type PageType, type PermissionLevel, type SpaceStats, type SpaceSummary } from '@trigon/shared';
 import { api } from './api';
 
 export interface RecentDoc {
@@ -138,7 +138,7 @@ export function useCreateSpace() {
   });
 }
 
-/** Move/reorder a node in the tree (drag & drop). */
+/** Move a node to another parent in the tree (drag & drop). */
 export function useMoveDocument() {
   const qc = useQueryClient();
   return useMutation({
@@ -170,7 +170,7 @@ export function buildTree(rows: DocumentNode[]): DocumentNode[] {
     (parent ? parent.children : roots).push(node);
   }
   const sort = (list: DocumentNode[]) => {
-    list.sort((a, b) => a.position - b.position || a.title.localeCompare(b.title));
+    list.sort(compareNodes);
     list.forEach((n) => sort(n.children ?? []));
   };
   sort(roots);
