@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { PageHeader } from '@/components/shell/page-header';
 import { CustomIcon, relativeTime } from '@/components/ui/doc-icon';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { ReviewInbox } from '@/components/shell/review-requests';
 import { useHealth } from '@/lib/queries';
 
 /** Review queue: pages whose verification has expired, and drafts waiting to be verified. */
@@ -14,6 +15,11 @@ export default function ReviewPage() {
     <>
       <PageHeader title="Review" subtitle={data ? `${data.stale} need review · ${data.drafts} drafts` : undefined} />
       <div className="mx-auto max-w-3xl px-4 pb-12 md:px-8">
+        <h2 className="mb-2 px-1 font-bold">Requested from you</h2>
+        <div className="mb-6 rounded-card bg-surface px-4 py-1 shadow-card">
+          <ReviewInbox empty="Nobody has asked you to review anything." />
+        </div>
+        <h2 className="mb-2 px-1 font-bold">Out of date or in draft</h2>
         <div className="overflow-hidden rounded-card bg-surface shadow-card">
           {isPending && <div className="h-40 animate-pulse" />}
           {data?.needsReview.length === 0 && <p className="p-10 text-center text-ink-3">Nothing to review — every page is verified and current.</p>}

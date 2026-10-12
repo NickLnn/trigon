@@ -8,7 +8,7 @@ import { documents, groupMembers, groups, spaces, users } from '../db/schema';
 import { EmailService } from '../email/email.service';
 import type { EmailContent } from '../email/template';
 import { SettingsService } from '../settings/settings.service';
-import { accountEmail, digestEmail, shareEmail, type AccountChange, type DigestPage } from './messages';
+import { accountEmail, digestEmail, reviewAnsweredEmail, reviewRequestEmail, shareEmail, type AccountChange, type DigestPage } from './messages';
 
 /** A whole group gets at most this many emails for one share; bigger groups are skipped (and logged). */
 const MAX_SHARE_RECIPIENTS = 300;
@@ -111,6 +111,51 @@ export class NotificationsService {
     });
   }
 
+  /** Someone asked `reviewerId` to review a page or file. */
+  reviewRequested(input: { requestId: string; requesterId: string; reviewerId: string; documentId: string; message: string | null }) {
+    this.run('Review request', async () => {
+      if (!(await this.email.enabled())) return;
+      const item = await this.item(input.documentId);
+      if (!item) return;
+      const [requester] = await this.db.select({ name: users.displayName, email: users.email }).from(users).where(eq(users.id, input.requesterId));
+      const content = reviewRequestEmail({
+        base: await this.settings.publicUrl(),
+        requester: { name: requester?.name ?? 'Someone', email: requester?.email ?? null },
+        item,
+        message: input.message,
+      });
+      await this.sendTo([input.reviewerId], 'reviews', content);
+    });
+  }
+
+  /** The reviewer approved or asked for changes: tell whoever asked. */
+  reviewAnswered(input: { requesterId: string | null; reviewerId: string; documentId: string; approved: boolean; note: string | null }) {
+    if (!input.requesterId || input.requesterId === input.reviewerId) return;
+    const requesterId = input.requesterId;
+    this.run('Review answer', async () => {
+      if (!(await this.email.enabled())) return;
+      const item = await this.item(input.documentId);
+      if (!item) return;
+      const content = reviewAnsweredEmail({
+        base: await this.settings.publicUrl(),
+        reviewer: await this.displayName(input.reviewerId),
+        item,
+        approved: input.approved,
+        note: input.note,
+      });
+      await this.sendTo([requesterId], 'reviews', content);
+    });
+  }
+
+  private async item(documentId: string) {
+    const [d] = await this.db
+      .select({ title: documents.title, kind: documents.kind, space: spaces.name })
+      .from(documents)
+      .innerJoin(spaces, eq(spaces.id, documents.spaceId))
+      .where(eq(documents.id, documentId));
+    return d ? { id: documentId, title: d.title, kind: d.kind, space: d.space } : null;
+  }
+
   /** Every morning (07:00 UTC): pages people own that need review or are drafts. Weekly = Mondays. */
   @Cron('0 7 * * *')
   async reviewDigests(now = new Date()) {
@@ -151,7 +196,7 @@ export class NotificationsService {
   }
 
   /** Email each recipient who wants this kind of message. */
-  private async sendTo(userIds: string[], kind: 'shares' | 'account', content: EmailContent, includeInactive = false) {
+  private async sendTo(userIds: string[], kind: 'shares' | 'account' | 'reviews', content: EmailContent, includeInactive = false) {
     const people = await this.db
       .select({ email: users.email, prefs: users.notificationPrefs })
       .from(users)

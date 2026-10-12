@@ -16,6 +16,7 @@ import { HealthController } from './health.controller';
 import { IconsModule } from './icons/icons.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PermissionsModule } from './permissions/permissions.module';
+import { ReviewsModule } from './reviews/reviews.module';
 import { SettingsCoreModule, SettingsModule } from './settings/settings.module';
 import { SpacesModule } from './spaces/spaces.module';
 import { UsersModule } from './users/users.module';
@@ -41,6 +42,7 @@ import { UsersModule } from './users/users.module';
     CollabModule,
     SettingsModule,
     NotificationsModule,
+    ReviewsModule,
   ],
   controllers: [HealthController],
   providers: [

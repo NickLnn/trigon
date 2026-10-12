@@ -137,6 +137,10 @@ export const ACTIVITY_ACTIONS = {
   'item.moved': { category: 'content', label: 'Moved {type}' },
   'item.updated': { category: 'content', label: 'Changed {type} properties' },
   'page.verified': { category: 'content', label: 'Verified page' },
+  'review.requested': { category: 'content', label: 'Asked for a review of {type}' },
+  'review.approved': { category: 'content', label: 'Approved {type} in review' },
+  'review.changes_requested': { category: 'content', label: 'Requested changes to {type}' },
+  'review.cancelled': { category: 'content', label: 'Cancelled a review request' },
   'item.deleted': { category: 'content', label: 'Deleted {type}' },
   'share.added': { category: 'sharing', label: 'Shared {type}' },
   'share.changed': { category: 'sharing', label: 'Changed access to {type}' },
@@ -354,9 +358,34 @@ export interface NotificationPrefs {
   account: boolean;
   /** Pages I own that need review or are still drafts. Weekly digests go out on Mondays. */
   reviewDigest: 'off' | 'daily' | 'weekly';
+  /** Someone asks me to review something, or answers a review I asked for. */
+  reviews: boolean;
 }
 
-export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { shares: true, account: true, reviewDigest: 'weekly' };
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { shares: true, account: true, reviewDigest: 'weekly', reviews: true };
+
+/** "Ask for review": one person asked another to check a page or file. */
+export const REVIEW_STATUSES = ['pending', 'approved', 'changes_requested', 'cancelled'] as const;
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
+
+export interface ReviewRequest {
+  id: string;
+  documentId: string;
+  status: ReviewStatus;
+  /** What the requester asked for. */
+  message: string | null;
+  /** The reviewer's note when answering. */
+  response: string | null;
+  createdAt: string;
+  respondedAt: string | null;
+  requestedBy: { id: string; name: string } | null;
+  reviewer: { id: string; name: string; email: string };
+}
+
+/** A pending request addressed to me, with the item it is about. */
+export interface MyReviewRequest extends ReviewRequest {
+  document: { title: string; kind: DocumentKind; icon: string | null; mimeType: string | null; pageType: PageType; spaceId: string; spaceName: string };
+}
 
 export interface MyNotifications {
   prefs: NotificationPrefs;

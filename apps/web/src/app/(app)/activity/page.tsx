@@ -162,6 +162,9 @@ function EventSheet({ e, onClose, onFilter }: { e: ActivityEvent; onClose: () =>
         {typeof d.method === 'string' && <DetailRow label="Method">{d.method}</DetailRow>}
         {typeof d.reason === 'string' && <DetailRow label="Reason">{d.reason}</DetailRow>}
         {typeof d.member === 'string' && <DetailRow label="Member">{d.member}</DetailRow>}
+        {typeof d.reviewer === 'string' && <DetailRow label="Reviewer">{d.reviewer}</DetailRow>}
+        {typeof d.message === 'string' && <DetailRow label="Message">{d.message}</DetailRow>}
+        {typeof d.note === 'string' && <DetailRow label="Note">{d.note}</DetailRow>}
         {Array.isArray(d.fields) && <DetailRow label="Fields saved">{d.fields.join(', ')}</DetailRow>}
         <DetailRow label="IP address">{e.ip ?? '—'}</DetailRow>
         {e.userAgent && (

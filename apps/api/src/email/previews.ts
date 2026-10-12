@@ -1,4 +1,4 @@
-import { accountEmail, digestEmail, shareEmail, testEmail } from '../notifications/messages';
+import { accountEmail, digestEmail, reviewAnsweredEmail, reviewRequestEmail, shareEmail, testEmail } from '../notifications/messages';
 import { LOGO_PNG_BASE64 } from './logo';
 import { renderEmailHtml, type EmailContent } from './template';
 
@@ -38,6 +38,38 @@ export const EMAIL_PREVIEWS: Record<string, { label: string; build: (base: strin
         level: 'manage',
         previousLevel: 'edit',
         group: null,
+      }),
+  },
+  'review-request': {
+    label: 'Review requested',
+    build: (base) =>
+      reviewRequestEmail({
+        base,
+        requester: { name: 'George Ioannou', email: 'george@example.com' },
+        item: { id: '00000000-0000-0000-0000-000000000021', title: 'Firewall change procedure', kind: 'page', space: 'Networking' },
+        message: 'Could you check the rollback steps before Friday’s change window?',
+      }),
+  },
+  'review-approved': {
+    label: 'Review approved',
+    build: (base) =>
+      reviewAnsweredEmail({
+        base,
+        reviewer: 'Maria Papadopoulou',
+        item: { id: '00000000-0000-0000-0000-000000000021', title: 'Firewall change procedure', kind: 'page', space: 'Networking' },
+        approved: true,
+        note: 'Looks good — thanks for adding the rollback section.',
+      }),
+  },
+  'review-changes': {
+    label: 'Changes requested',
+    build: (base) =>
+      reviewAnsweredEmail({
+        base,
+        reviewer: 'Maria Papadopoulou',
+        item: { id: '00000000-0000-0000-0000-000000000021', title: 'Firewall change procedure', kind: 'page', space: 'Networking' },
+        approved: false,
+        note: 'Step 4 should mention taking a config backup first.',
       }),
   },
   created: {

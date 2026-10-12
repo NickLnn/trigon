@@ -144,6 +144,13 @@ export function summary(e: ActivityEvent): string {
     case 'group.member_added':
     case 'group.member_removed':
       return show(d.member);
+    case 'review.requested':
+      return show(d.reviewer) + (d.message ? ` · “${d.message}”` : '');
+    case 'review.approved':
+    case 'review.changes_requested':
+      return d.note ? `“${d.note}”` : '';
+    case 'review.cancelled':
+      return show(d.reviewer);
     case 'settings.updated':
       return Array.isArray(d.fields) ? d.fields.join(', ') : '';
     default:
