@@ -8,6 +8,7 @@ import { LogoMark } from '@/components/ui/logo';
 import { useSession } from '@/lib/session';
 import { useIsDesktop } from '@/lib/use-media';
 import { BottomNav } from './bottom-nav';
+import { FirstRunSetup } from './first-run-setup';
 import { Sidebar } from './sidebar';
 
 function Splash() {
@@ -52,6 +53,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Sidebar />
         <main className="min-w-0 flex-1">{children}</main>
         <InstallPrompt />
+        {user.role === 'admin' && <FirstRunSetup />}
       </div>
     );
   }
@@ -72,6 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </AnimatePresence>
       <BottomNav />
       <InstallPrompt />
+      {user.role === 'admin' && <FirstRunSetup />}
     </div>
   );
 }

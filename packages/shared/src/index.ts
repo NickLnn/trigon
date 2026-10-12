@@ -308,6 +308,12 @@ export function matchEmbedProvider(raw: string): EmbedProviderMatch | null {
 
 export interface GeneralSettings {
   allowLocalSignup: boolean;
+  /** Address on the local network, e.g. http://192.168.x.x:8797 (empty = APP_URL). */
+  internalUrl: string;
+  /** Address people use from anywhere (HTTPS), e.g. https://trigon.example.com — used in emails and for Microsoft sign-in. */
+  publicUrl: string;
+  /** The first-run "Where does Trigon live?" step was completed or skipped. */
+  setupDone: boolean;
 }
 
 export interface EntraSettings {
@@ -589,7 +595,17 @@ export interface AllSettings {
   ldap: LdapSettings;
   email: EmailSettings;
   /** Read-only facts the settings UI needs. */
-  info: { appUrl: string; entraRedirectUri: string; httpsWarning: boolean; entraSignIn: EntraSignInStatus };
+  info: {
+    /** Where Trigon is reached on the LAN. */
+    internalUrl: string;
+    /** The public HTTPS address, when known (set in General, or learned from an admin's browser). */
+    publicUrl: string | null;
+    /** The Microsoft sign-in callback for the public address. */
+    entraRedirectUri: string;
+    /** No public HTTPS address is known yet. */
+    httpsWarning: boolean;
+    entraSignIn: EntraSignInStatus;
+  };
 }
 
 /** Whether Trigon's sign-in redirect addresses are registered on the Entra app. */

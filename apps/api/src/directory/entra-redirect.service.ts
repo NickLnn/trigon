@@ -68,13 +68,16 @@ export class EntraRedirectService implements OnApplicationBootstrap {
     void this.ensure();
   }
 
-  private appOrigin() {
-    return new URL(this.settings.appUrl()).origin;
+  /** The address to fall back to: the public one when set, else the internal one. */
+  private async appOrigin() {
+    return new URL(await this.settings.publicUrl()).origin;
   }
 
   private async trustedOrigins(): Promise<string[]> {
     const s = await this.settings.get('entra');
-    return [...new Set([this.appOrigin(), ...(s.signInOrigins ?? [])])];
+    const g = await this.settings.get('general');
+    const own = [g.publicUrl, await this.settings.internalUrl()].filter(Boolean).map((u) => new URL(u).origin);
+    return [...new Set([...own, ...(s.signInOrigins ?? [])])];
   }
 
   /** Every callback URL Microsoft has to accept (an explicit Redirect URI setting overrides the rest). */
@@ -90,7 +93,7 @@ export class EntraRedirectService implements OnApplicationBootstrap {
     if (s.redirectUri) return { redirectUri: s.redirectUri, origin: new URL(s.redirectUri).origin };
     const seen = requestOrigin(req);
     const trusted = await this.trustedOrigins();
-    let origin = seen && trusted.includes(seen) ? seen : this.appOrigin();
+    let origin = seen && trusted.includes(seen) ? seen : await this.appOrigin();
     // Opened over plain http on the LAN: sign in through a known HTTPS address instead (the session
     // then lives there), since Microsoft won't redirect back to http.
     if (!redirectAllowed(`${origin}${ENTRA_CALLBACK_PATH}`)) origin = trusted.find((o) => o.startsWith('https://')) ?? origin;
