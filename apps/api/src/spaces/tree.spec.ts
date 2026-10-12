@@ -34,3 +34,8 @@ test('orders numbers naturally', () => {
   const tree = buildTree([node('a', 'Step 10'), node('b', 'Step 2'), node('c', 'Step 1')]);
   assert.deepEqual(tree.map((n) => n.title), ['Step 1', 'Step 2', 'Step 10']);
 });
+
+test('manual spaces keep drag & drop position, title breaks ties', () => {
+  const tree = buildTree([node('a', 'Zulu', null, 1), node('b', 'Alpha', null, 2), node('c', 'Bravo', null, 2)], 'manual');
+  assert.deepEqual(tree.map((n) => n.title), ['Zulu', 'Alpha', 'Bravo']);
+});

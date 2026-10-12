@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { compareNodes, type DocumentNode, type SpaceStats, type SpaceSummary } from '@trigon/shared';
-import { IsHexColor, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { SPACE_SORTS, treeComparator, type DocumentNode, type SpaceSort, type SpaceStats, type SpaceSummary } from '@trigon/shared';
+import { IsHexColor, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
@@ -49,6 +49,10 @@ class UpdateSpaceDto {
   @IsOptional()
   @IsHexColor()
   color?: string;
+
+  @IsOptional()
+  @IsIn(SPACE_SORTS)
+  sortMode?: SpaceSort;
 }
 
 const slugify = (s: string) =>
@@ -60,15 +64,16 @@ const slugify = (s: string) =>
     .replace(/[\s_-]+/g, '-')
     .slice(0, 60) || 'space';
 
-export function buildTree(rows: DocumentNode[]): DocumentNode[] {
+export function buildTree(rows: DocumentNode[], mode: SpaceSort = 'alpha'): DocumentNode[] {
   const byId = new Map(rows.map((r) => [r.id, { ...r, children: [] as DocumentNode[] }]));
   const roots: DocumentNode[] = [];
   for (const node of byId.values()) {
     const parent = node.parentId ? byId.get(node.parentId) : undefined;
     (parent ? parent.children! : roots).push(node);
   }
+  const compare = treeComparator(mode);
   const sort = (list: DocumentNode[]) => {
-    list.sort(compareNodes);
+    list.sort(compare);
     list.forEach((n) => n.children && sort(n.children));
   };
   sort(roots);
@@ -98,6 +103,7 @@ export class SpacesController {
       icon: s.icon,
       color: s.color,
       description: s.description,
+      sortMode: s.sortMode,
       myPermission: user.role === 'admin' ? 'manage' : levels.get(s.id)!,
     }));
   }
@@ -163,6 +169,7 @@ export class SpacesController {
   @Get(':id/tree')
   async tree(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<DocumentNode[]> {
     await this.perms.assertSpace(user, id, 'view');
+    const [space] = await this.db.select({ sortMode: spaces.sortMode }).from(spaces).where(eq(spaces.id, id));
     const rows = await this.db
       .select({
         id: documents.id,
@@ -179,6 +186,6 @@ export class SpacesController {
       })
       .from(documents)
       .where(and(eq(documents.spaceId, id), isNull(documents.deletedAt)));
-    return buildTree(rows.map((r) => ({ ...r, updatedAt: r.updatedAt.toISOString() })));
+    return buildTree(rows.map((r) => ({ ...r, updatedAt: r.updatedAt.toISOString() })), space?.sortMode);
   }
 }

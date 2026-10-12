@@ -35,7 +35,7 @@ function SpaceSection({
   onCreate: () => void;
   activeId?: string;
 }) {
-  const { over, handlers } = useSpaceRootDrop(space.id);
+  const { over, handlers } = useSpaceRootDrop(space.id, space.sortMode);
   const canEdit = space.myPermission === 'edit' || space.myPermission === 'manage';
   return (
     <div className={`mb-0.5 rounded-xl ${over ? 'bg-navy-3 ring-2 ring-accent' : ''}`} {...(canEdit ? handlers : {})}>
@@ -55,7 +55,7 @@ function SpaceSection({
       </div>
       {open && (
         <div className="pb-1">
-          <SpaceTree spaceId={space.id} activeId={activeId} canEdit={canEdit} />
+          <SpaceTree spaceId={space.id} sortMode={space.sortMode} activeId={activeId} canEdit={canEdit} />
         </div>
       )}
     </div>
