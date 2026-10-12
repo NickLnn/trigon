@@ -7,6 +7,7 @@ import { atLeast } from '@trigon/shared';
 import { eq } from 'drizzle-orm';
 import { yXmlFragmentToProsemirrorJSON } from 'y-prosemirror';
 import { ActivityService } from '../activity/activity.service';
+import { clientIp } from '../activity/request-context';
 import { TokensService } from '../auth/tokens.service';
 import { Database, InjectDb } from '../db/db.module';
 import { documents } from '../db/schema';
@@ -54,22 +55,33 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
         },
         store: async ({ documentName, state, document, lastContext }) => {
           try {
-            const userId = (lastContext as { userId?: string } | undefined)?.userId;
+            const ctx = lastContext as { userId?: string; ip?: string | null; userAgent?: string | null } | undefined;
+            const userId = ctx?.userId;
             // The first save of an imported page only materialises the import (someone opened it), it isn't an edit.
-            const [prev] = await this.db.select({ importHtml: documents.importHtml }).from(documents).where(eq(documents.id, documentName));
+            const [prev] = await this.db
+              .select({ importHtml: documents.importHtml, textContent: documents.textContent })
+              .from(documents)
+              .where(eq(documents.id, documentName));
             const json = yXmlFragmentToProsemirrorJSON(document.getXmlFragment('default')) as PMNode;
+            const text = proseMirrorText(json).slice(0, 1_000_000);
             await this.db
               .update(documents)
               .set({
                 ydoc: Buffer.from(state),
                 content: json as unknown as Record<string, unknown>,
-                textContent: proseMirrorText(json).slice(0, 1_000_000),
+                textContent: text,
                 // Once an editor has materialised an import into the Yjs doc, the raw HTML is no longer needed.
                 importHtml: null,
                 updatedById: userId,
               })
               .where(eq(documents.id, documentName));
-            if (prev && prev.importHtml === null) this.activity.noteEdit(userId, documentName);
+            if (prev && prev.importHtml === null) {
+              this.activity.noteEdit(userId, documentName, {
+                before: prev.textContent ?? '',
+                after: text,
+                client: { ip: ctx?.ip ?? null, userAgent: ctx?.userAgent ?? null },
+              });
+            }
           } catch (err) {
             // Never lose a save silently.
             this.logger.error(`Saving document ${documentName} failed: ${(err as Error).message}`);
@@ -94,7 +106,7 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
       debounce: 2000,
       maxDebounce: 10000,
       extensions,
-      onAuthenticate: async ({ token, documentName, connectionConfig }) => {
+      onAuthenticate: async ({ token, documentName, connectionConfig, requestHeaders }) => {
         // Hocuspocus turns any throw into a bare "permission-denied" for the client, so log the real reason.
         try {
           const payload = await this.tokens.verify(token).catch((err: Error) => {
@@ -105,7 +117,9 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
           const { level } = await this.perms.documentLevel(user, documentName);
           if (!atLeast(level, 'view')) throw Object.assign(new Error(`no access to ${documentName}`), { reason: 'forbidden' });
           connectionConfig.readOnly = !atLeast(level, 'edit');
-          return { userId: user.id };
+          // Kept on the connection so live edits are logged with the editor's address and device.
+          const headers = Object.fromEntries(requestHeaders.entries());
+          return { userId: user.id, ip: clientIp(headers, null), userAgent: headers['user-agent']?.slice(0, 400) ?? null };
         } catch (err) {
           this.logger.warn(`Collab sign-in refused for document ${documentName}: ${(err as Error).message}`);
           throw err;

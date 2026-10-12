@@ -90,6 +90,19 @@ export function changeLines(changes: unknown): string[] {
   );
 }
 
+/** Line diff stored with "Edited page/file" entries (see apps/api/src/activity/text-diff.ts). */
+export interface EditDiff {
+  added: number;
+  removed: number;
+  lines: { t: ' ' | '+' | '-' | '…'; s: string }[];
+  truncated: boolean;
+}
+
+export const editDiff = (details: Record<string, unknown>): EditDiff | null => {
+  const d = details.diff as EditDiff | undefined;
+  return d && Array.isArray(d.lines) ? d : null;
+};
+
 const size = (b: number) => (b < 1024 ? `${b} B` : b < 1024 ** 2 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 ** 2).toFixed(1)} MB`);
 
 /** One-line summary of what happened, for the list. */
@@ -102,8 +115,11 @@ export function summary(e: ActivityEvent): string {
     case 'file.uploaded':
       return typeof d.sizeBytes === 'number' ? size(d.sizeBytes) : '';
     case 'page.edited':
-    case 'file.edited':
-      return Number(d.saves) > 1 ? `${d.saves} saves` : '1 save';
+    case 'file.edited': {
+      const diff = editDiff(d);
+      const saves = Number(d.saves) > 1 ? `${d.saves} saves` : '1 save';
+      return diff ? `+${diff.added} −${diff.removed} lines · ${saves}` : saves;
+    }
     case 'item.renamed':
     case 'item.moved':
       return `${show(d.from)} → ${show(d.to)}`;

@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createReadStream } from 'node:fs';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
@@ -35,6 +35,10 @@ export class StorageService implements OnModuleInit {
 
   stream(key: string) {
     return createReadStream(this.pathFor(key));
+  }
+
+  read(key: string): Promise<Buffer> {
+    return readFile(this.pathFor(key));
   }
 
   async remove(key: string) {

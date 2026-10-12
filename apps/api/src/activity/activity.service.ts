@@ -4,7 +4,8 @@ import { ACTIVITY_ACTIONS, type ActivityAction } from '@trigon/shared';
 import { and, eq, lt, sql } from 'drizzle-orm';
 import { Database, InjectDb } from '../db/db.module';
 import { activity, documents, groups, spaces, users } from '../db/schema';
-import { requestContext } from './request-context';
+import { requestContext, type RequestContext } from './request-context';
+import { textDiff } from './text-diff';
 
 export interface ActivityTarget {
   type: string;
@@ -21,6 +22,15 @@ export interface ActivityInput {
   spaceId?: string | null;
   target?: ActivityTarget;
   details?: Record<string, unknown>;
+  /** Where the action came from when it didn't arrive as an HTTP request (live editing). */
+  client?: RequestContext;
+}
+
+export interface EditInput {
+  /** Plain text of the page or file before and after this save. */
+  before: string;
+  after: string;
+  client?: RequestContext;
 }
 
 /** Continuous typing in a page becomes one "Edited page" entry per person per session. */
@@ -35,8 +45,8 @@ const DEFAULT_RETENTION_DAYS = 365;
 @Injectable()
 export class ActivityService {
   private readonly logger = new Logger(ActivityService.name);
-  /** `${actorId}:${documentId}` → the open "Edited page" row and when it was last extended. */
-  private readonly editSessions = new Map<string, { id: string; last: number }>();
+  /** `${actorId}:${documentId}` → the open "Edited page" row, the text it started from, and when it was last extended. */
+  private readonly editSessions = new Map<string, { id: string; last: number; baseline: string }>();
 
   constructor(@InjectDb() private readonly db: Database) {}
 
@@ -45,7 +55,7 @@ export class ActivityService {
   }
 
   private async write(input: ActivityInput): Promise<string> {
-    const ctx = requestContext();
+    const ctx = input.client ?? requestContext();
     const [actor] = input.actorId
       ? await this.db.select({ name: users.displayName, email: users.email }).from(users).where(eq(users.id, input.actorId))
       : [];
@@ -71,22 +81,26 @@ export class ActivityService {
     return row.id;
   }
 
-  /** A collaborative save of a page (or a text file save) by `actorId`; coalesced into editing sessions. */
-  noteEdit(actorId: string | undefined, documentId: string, action: 'page.edited' | 'file.edited' = 'page.edited'): void {
-    if (!actorId) return;
-    this.extendEdit(actorId, documentId, action).catch((err: Error) => this.logger.error(`Recording ${action} failed: ${err.message}`));
+  /**
+   * A collaborative save of a page (or a text file save) by `actorId`. Saves are coalesced into editing
+   * sessions; each session keeps a line diff from the text it started with to the latest save.
+   */
+  noteEdit(actorId: string | undefined, documentId: string, edit: EditInput, action: 'page.edited' | 'file.edited' = 'page.edited'): void {
+    if (!actorId || edit.before === edit.after) return;
+    this.extendEdit(actorId, documentId, edit, action).catch((err: Error) => this.logger.error(`Recording ${action} failed: ${err.message}`));
   }
 
-  private async extendEdit(actorId: string, documentId: string, action: 'page.edited' | 'file.edited') {
+  private async extendEdit(actorId: string, documentId: string, edit: EditInput, action: 'page.edited' | 'file.edited') {
     const key = `${actorId}:${documentId}`;
     const now = Date.now();
     const open = this.editSessions.get(key);
     if (open && now - open.last < EDIT_SESSION_MS) {
       open.last = now;
+      const diff = textDiff(open.baseline, edit.after);
       await this.db
         .update(activity)
         .set({
-          details: sql`jsonb_set(jsonb_set(${activity.details}, '{saves}', to_jsonb(coalesce((${activity.details}->>'saves')::int, 1) + 1)), '{until}', to_jsonb(now()))`,
+          details: sql`${activity.details} || jsonb_build_object('saves', coalesce((${activity.details}->>'saves')::int, 1) + 1, 'until', now(), 'diff', ${JSON.stringify(diff)}::jsonb)`,
         })
         .where(eq(activity.id, open.id));
       return;
@@ -101,9 +115,10 @@ export class ActivityService {
       actorId,
       spaceId: doc.spaceId,
       target: { type: doc.kind, id: documentId, name: doc.title },
-      details: { saves: 1 },
+      details: { saves: 1, diff: textDiff(edit.before, edit.after) },
+      client: edit.client,
     });
-    this.editSessions.set(key, { id, last: now });
+    this.editSessions.set(key, { id, last: now, baseline: edit.before });
     if (this.editSessions.size > 5000) {
       for (const [k, v] of this.editSessions) if (now - v.last >= EDIT_SESSION_MS) this.editSessions.delete(k);
     }

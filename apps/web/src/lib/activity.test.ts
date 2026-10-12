@@ -43,6 +43,7 @@ test('summaries read naturally', () => {
   assert.equal(summary(event('share.changed', { sharedWith: 'Bob', previousLevel: 'view', level: 'manage' })), 'Bob · view → manage');
   assert.equal(summary(event('item.renamed', { from: 'Old', to: 'New' })), 'Old → New');
   assert.equal(summary(event('page.edited', { saves: 4 })), '4 saves');
+  assert.equal(summary(event('page.edited', { saves: 1, diff: { added: 3, removed: 1, lines: [], truncated: false } })), '+3 −1 lines · 1 save');
   assert.deepEqual(changeLines({ status: { from: 'none', to: 'draft' }, icon: { from: null, to: '🔑' }, sortMode: { from: 'alpha', to: 'manual' } }), [
     'Status: none → draft',
     'Icon changed',
