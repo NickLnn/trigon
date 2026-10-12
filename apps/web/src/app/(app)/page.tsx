@@ -154,7 +154,7 @@ export default function HomePage() {
           </Link>
         </div>
 
-        <div className="grid gap-5 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
           <div className="space-y-5">
             <HealthCard>
               {writable && <div className="mt-5 hidden flex-wrap gap-5 border-t border-navy-3 pt-4 md:flex">{actions(true)}</div>}
