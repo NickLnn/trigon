@@ -480,7 +480,7 @@ export interface SyncSourceStatus {
 }
 
 /** Where backups go: a folder on this server, an SMB share, or an NFS export mounted into the container. */
-export const BACKUP_DESTINATIONS = ['local', 'smb', 'nfs'] as const;
+export const BACKUP_DESTINATIONS = ['local', 'smb', 'nfs', 'gdrive'] as const;
 export type BackupDestination = (typeof BACKUP_DESTINATIONS)[number];
 
 export interface BackupSettings {
@@ -490,7 +490,8 @@ export interface BackupSettings {
   schedule: string;
   /** How many backups to keep at the destination; older ones are deleted after each backup. */
   keep: number;
-  destination: BackupDestination;
+  /** Every backup is copied to each of these (at least one). */
+  destinations: BackupDestination[];
   /** Folder inside the container for 'local' (default /data/backups, mapped to ./data/backups). */
   localPath: string;
   /** NFS server and export, used to generate the docker-compose snippet; mounted at /data/backups-nfs. */
@@ -504,6 +505,17 @@ export interface BackupSettings {
   smbDomain: string;
   smbPassword?: string;
   hasSmbPassword?: boolean;
+  /** Google Drive: the admin's own OAuth client (Google Cloud Console → Credentials → OAuth client ID, type Web). */
+  gdriveClientId: string;
+  gdriveClientSecret?: string;
+  hasGdriveClientSecret?: boolean;
+  /** Folder in My Drive, created by Trigon when missing. */
+  gdriveFolderName: string;
+  /** Set by "Connect Google Drive" (read-only). */
+  gdriveFolderId?: string | null;
+  gdriveAccount?: string | null;
+  gdriveRefreshToken?: string;
+  hasGdriveRefreshToken?: boolean;
   /** Result of the last run (read-only). */
   lastRun?: BackupRunResult | null;
 }
@@ -523,6 +535,17 @@ export interface BackupFile {
   sizeBytes: number;
   createdAt: string;
   trigger: BackupRunResult['trigger'];
+  /** Destinations that hold a copy. */
+  locations: BackupDestination[];
+}
+
+export interface BackupDestinationStatus {
+  key: BackupDestination;
+  label: string;
+  ok: boolean;
+  message: string;
+  freeBytes: number | null;
+  persistent: boolean | null;
 }
 
 export interface BackupOverview {
@@ -530,8 +553,8 @@ export interface BackupOverview {
   running: { step: string; startedAt: string; kind: 'backup' | 'restore' } | null;
   nextRun: string | null;
   files: BackupFile[];
-  /** Whether the destination can be reached, and why not. */
-  destination: { ok: boolean; message: string; freeBytes: number | null; persistent: boolean | null };
+  /** Each selected destination: reachable or not, and why. */
+  destinations: BackupDestinationStatus[];
   /** docker-compose lines for an NFS destination (filled from nfsServer / nfsExport). */
   nfsCompose: string;
 }

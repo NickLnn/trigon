@@ -1,20 +1,19 @@
-import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Logger, Param, Post, Put, Res } from '@nestjs/common';
-import type { BackupOverview, BackupSettings } from '@trigon/shared';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Logger, Param, Post, Put, Query, Req, Res } from '@nestjs/common';
+import { BACKUP_DESTINATIONS, type BackupDestination, type BackupOverview, type BackupSettings } from '@trigon/shared';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { CronJob } from 'cron';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { createReadStream } from 'node:fs';
 import { ActivityService } from '../activity/activity.service';
-import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
+import { CurrentUser, Public, Roles, type AuthUser } from '../common/decorators';
 import { SettingsService } from '../settings/settings.service';
 import { BackupService } from './backup.service';
-import { normalizeSmb } from './destinations';
 
 class BackupSettingsDto {
   @IsBoolean() enabled: boolean;
   @IsString() @MaxLength(100) schedule: string;
   @IsInt() @Min(1) @Max(365) keep: number;
-  @IsIn(['local', 'smb', 'nfs']) destination: BackupSettings['destination'];
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(4) @IsIn(BACKUP_DESTINATIONS as unknown as string[], { each: true }) destinations: BackupDestination[];
   @IsString() @MaxLength(300) localPath: string;
   @IsString() @MaxLength(255) nfsServer: string;
   @IsString() @MaxLength(500) nfsExport: string;
@@ -24,6 +23,9 @@ class BackupSettingsDto {
   @IsString() @MaxLength(255) smbUser: string;
   @IsString() @MaxLength(255) smbDomain: string;
   @IsOptional() @IsString() @MaxLength(500) smbPassword?: string;
+  @IsString() @MaxLength(300) gdriveClientId: string;
+  @IsOptional() @IsString() @MaxLength(300) gdriveClientSecret?: string;
+  @IsString() @MaxLength(200) gdriveFolderName: string;
 }
 
 class RestoreDto {
@@ -57,9 +59,8 @@ export class BackupsController {
         throw new BadRequestException(`Invalid schedule "${dto.schedule}"`);
       }
     }
-    if (dto.destination === 'local' && !dto.localPath.startsWith('/')) throw new BadRequestException('The folder must be an absolute path inside the container, e.g. /data/backups');
-    const clean = dto.destination === 'smb' ? normalizeSmb(dto as BackupSettings) : dto;
-    await this.settings.update('backup', clean as Partial<BackupSettings>, user.id);
+    if (dto.destinations.includes('local') && !dto.localPath.startsWith('/')) throw new BadRequestException('The folder must be an absolute path inside the container, e.g. /data/backups');
+    await this.backups.save(dto as BackupSettings, user.id);
     this.activity.record({ action: 'settings.updated', actorId: user.id, target: { type: 'settings', id: null, name: 'Backups' }, details: { fields: Object.keys(dto) } });
     return this.backups.overview();
   }
@@ -77,8 +78,9 @@ export class BackupsController {
   }
 
   @Get('files/:name')
-  async download(@Param('name') name: string, @Res() res: Response) {
-    const { file, cleanup } = await this.backups.download(name);
+  async download(@Param('name') name: string, @Query('from') from: string | undefined, @Res() res: Response) {
+    const source = (BACKUP_DESTINATIONS as readonly string[]).includes(from ?? '') ? (from as BackupDestination) : undefined;
+    const { file, cleanup } = await this.backups.download(name, source);
     res.set({ 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${name}"` });
     const stream = createReadStream(file);
     stream.on('close', () => void cleanup());
@@ -89,6 +91,33 @@ export class BackupsController {
   async remove(@CurrentUser() user: AuthUser, @Param('name') name: string) {
     await this.backups.remove(name, user.id);
     return { ok: true };
+  }
+
+  /** Google Drive, step 1: where to send the admin to sign in. The address must be the one they are using. */
+  @Post('gdrive/connect')
+  @HttpCode(200)
+  gdriveConnect(@CurrentUser() user: AuthUser, @Req() req: Request) {
+    const origin = req.headers.origin;
+    if (!origin) throw new BadRequestException('Open this page in a browser to connect Google Drive.');
+    return this.backups.gdriveConnect(user.id, origin);
+  }
+
+  /** Google Drive, step 2: Google sends the browser back here (checked against the one-time state). */
+  @Public()
+  @Get('gdrive/callback')
+  async gdriveCallback(@Query() query: { code?: string; state?: string; error?: string }, @Res() res: Response) {
+    try {
+      res.redirect(await this.backups.gdriveCallback(query));
+    } catch (err) {
+      res.status(400).type('text/plain').send((err as Error).message);
+    }
+  }
+
+  @Post('gdrive/disconnect')
+  @HttpCode(200)
+  async gdriveDisconnect(@CurrentUser() user: AuthUser) {
+    await this.backups.gdriveDisconnect(user.id);
+    return this.backups.overview();
   }
 
   /** Restore runs to completion before answering; Trigon restarts right after. */
