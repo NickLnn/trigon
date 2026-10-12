@@ -323,6 +323,34 @@ export interface EntraSettings {
   syncScope: 'all' | 'selected';
   syncGroups: DirectoryPick[];
   syncUsers: DirectoryPick[];
+  /** The admin chose to send email through Exchange Online: the app holds Graph Mail.Send. */
+  mailSend?: boolean;
+}
+
+/** Outgoing email (notifications). Secrets are write-only, like the other sections. */
+export const EMAIL_PROVIDERS = ['none', 'smtp', 'microsoft'] as const;
+export type EmailProvider = (typeof EMAIL_PROVIDERS)[number];
+
+export interface EmailSettings {
+  provider: EmailProvider;
+  /** Sender address. For Microsoft 365 this must be a mailbox in the tenant (a shared mailbox works). */
+  fromAddress: string;
+  fromName: string;
+  smtpHost: string;
+  smtpPort: number;
+  /** tls = implicit TLS (465), starttls = upgrade (587), none = plain (25, LAN relays only). */
+  smtpSecurity: 'tls' | 'starttls' | 'none';
+  smtpUser: string;
+  smtpPassword?: string;
+  hasSmtpPassword?: boolean;
+  smtpTlsRejectUnauthorized: boolean;
+}
+
+/** Whether the Entra app can send mail (Mail.Send granted). */
+export interface EmailMicrosoftStatus {
+  connected: boolean;
+  mailSend: 'granted' | 'missing' | 'unknown';
+  message: string | null;
 }
 
 /** A group or user chosen in the "who gets access" picker (names kept for display). */
@@ -369,6 +397,7 @@ export interface AllSettings {
   general: GeneralSettings;
   entra: EntraSettings;
   ldap: LdapSettings;
+  email: EmailSettings;
   /** Read-only facts the settings UI needs. */
   info: { appUrl: string; entraRedirectUri: string; httpsWarning: boolean; entraSignIn: EntraSignInStatus };
 }

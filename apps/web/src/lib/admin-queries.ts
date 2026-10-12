@@ -1,15 +1,17 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AdminGroup, AdminUser, AllSettings, DirectoryPick, EntraProvisionStatus, EntraSettings, GeneralSettings, LdapSettings, SyncSourceStatus } from '@trigon/shared';
+import type { AdminGroup, AdminUser, AllSettings, DirectoryPick, EmailMicrosoftStatus, EmailSettings, EntraProvisionStatus, EntraSettings, GeneralSettings, LdapSettings, SyncSourceStatus } from '@trigon/shared';
 import { api } from './api';
 
 export const useSettings = () => useQuery({ queryKey: ['settings'], queryFn: () => api<AllSettings>('/settings') });
 
-export function useSaveSettings<K extends 'general' | 'entra' | 'ldap'>(section: K) {
+type SectionValue<K> = K extends 'general' ? GeneralSettings : K extends 'entra' ? EntraSettings : K extends 'email' ? EmailSettings : LdapSettings;
+
+export function useSaveSettings<K extends 'general' | 'entra' | 'ldap' | 'email'>(section: K) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (value: K extends 'general' ? GeneralSettings : K extends 'entra' ? EntraSettings : LdapSettings) =>
+    mutationFn: (value: SectionValue<K>) =>
       api(`/settings/${section}`, { method: 'PUT', json: value }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['settings'] });
@@ -79,10 +81,19 @@ export const useProvisionStatus = (poll: boolean) =>
 export function useStartProvision() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (publicUrl: string) => api<EntraProvisionStatus>('/settings/entra/provision', { method: 'POST', json: { publicUrl } }),
+    mutationFn: (input: { publicUrl: string; mail: boolean }) => api<EntraProvisionStatus>('/settings/entra/provision', { method: 'POST', json: input }),
     onSuccess: (data) => qc.setQueryData(['entra-provision'], data),
   });
 }
+
+export const useEmailTest = () =>
+  useMutation({
+    mutationFn: (input: EmailSettings & { to: string }) =>
+      api<{ ok: boolean; message: string }>('/settings/email/test', { method: 'POST', json: input }),
+  });
+
+export const useEmailMicrosoftStatus = (enabled: boolean) =>
+  useQuery({ queryKey: ['email-microsoft'], queryFn: () => api<EmailMicrosoftStatus>('/settings/email/microsoft'), enabled });
 
 export function useDisconnectEntra() {
   const qc = useQueryClient();

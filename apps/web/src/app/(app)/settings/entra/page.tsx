@@ -2,7 +2,8 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import type { EntraSettings, EntraSignInStatus } from '@trigon/shared';
-import { Check, Copy, ExternalLink, Globe, RefreshCw, Sparkles, Unplug, Users } from 'lucide-react';
+import { Check, Copy, ExternalLink, Globe, Mail, RefreshCw, ShieldCheck, Sparkles, Unplug, Users } from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { EntraScopeSheet } from '@/components/settings/entra-scope-sheet';
@@ -35,17 +36,62 @@ function validPublicUrl(v: string) {
   }
 }
 
+/** What the "Trigon" app registration is granted, shown before the admin signs in. */
+const BASE_PERMISSIONS = [
+  { name: 'User.Read.All', what: 'Read user profiles', why: 'Imports people and keeps names and email addresses current.' },
+  { name: 'Group.Read.All · GroupMember.Read.All', what: 'Read groups and their members', why: 'Lets you share spaces with Microsoft groups.' },
+  { name: 'Application.ReadWrite.OwnedBy', what: 'Manage only its own app registration', why: 'Adds new sign-in addresses later without an admin.' },
+  { name: 'openid · profile · email · User.Read', what: 'Sign people in', why: '“Sign in with Microsoft”, on behalf of the person signing in.' },
+] as const;
+
+const MAIL_PERMISSION = {
+  name: 'Mail.Send',
+  what: 'Send mail as any mailbox in your organisation',
+  why: 'Trigon only sends notifications from the one sender mailbox you choose in Settings → Email. You can lock it to that mailbox with an Exchange application access policy.',
+};
+
+function PermissionRow({ p, optional }: { p: { name: string; what: string; why: string }; optional?: boolean }) {
+  return (
+    <li className="flex gap-3 py-2.5">
+      {optional ? <Mail className="mt-0.5 size-4 shrink-0 text-accent" /> : <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" />}
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold">{p.what}</span>
+        <span className="block font-mono text-meta text-ink-3">{p.name}</span>
+        <span className="block text-meta text-ink-2">{p.why}</span>
+      </span>
+    </li>
+  );
+}
+
 /**
  * "Connect to Microsoft": the admin confirms Trigon's public HTTPS address, then signs in with a device
  * code and Trigon creates (or updates) and consents its own app registration.
  */
-function ConnectSheet({ open, onOpenChange, onNext, known }: { open: boolean; onOpenChange: (v: boolean) => void; onNext: () => void; known: string[] }) {
+function ConnectSheet({
+  open,
+  onOpenChange,
+  onNext,
+  known,
+  mailDefault,
+  mailGranted,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onNext: () => void;
+  known: string[];
+  /** Pre-select "send email through Exchange Online" (opened from Settings → Email, or already granted). */
+  mailDefault: boolean;
+  /** Mail.Send was granted by an earlier connection; declining now removes it. */
+  mailGranted: boolean;
+}) {
   const start = useStartProvision();
   const status = useProvisionStatus(open);
   const s = status.data;
   const [copied, setCopied] = useState(false);
   const [publicUrl, setPublicUrl] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
+  const [stage, setStage] = useState<'address' | 'mail' | 'running'>('address');
+  const [mail, setMail] = useState(mailDefault);
+  const confirmed = stage === 'running';
   const active = s?.state === 'waiting_for_sign_in' || s?.state === 'working';
   const qc = useQueryClient();
 
@@ -59,11 +105,51 @@ function ConnectSheet({ open, onOpenChange, onNext, known }: { open: boolean; on
   // Every new run starts with the address check; a run already in progress is shown as is.
   useEffect(() => {
     if (!open) return;
-    setConfirmed(false);
+    setStage('address');
+    setMail(mailDefault);
     start.reset();
     setPublicUrl(currentHttpsOrigin() || known.find((o) => o.startsWith('https://')) || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  if (stage === 'mail' && !active) {
+    const begin = (withMail: boolean) => {
+      setMail(withMail);
+      setStage('running');
+      start.mutate({ publicUrl: new URL(publicUrl).origin, mail: withMail });
+    };
+    return (
+      <BottomSheet open={open} onOpenChange={onOpenChange} title="Send email through Exchange Online?" description="Trigon can send notifications from a mailbox in your Microsoft 365 organisation — no SMTP server needed.">
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-surface-2/60 px-4 py-1">
+            <p className="pt-3 text-meta font-semibold uppercase tracking-wide text-ink-3">Always granted to the “Trigon” app registration</p>
+            <ul className="divide-y divide-line">
+              {BASE_PERMISSIONS.map((p) => (
+                <PermissionRow key={p.name} p={p} />
+              ))}
+            </ul>
+          </div>
+          <div className={`rounded-2xl px-4 py-1 ring-2 ${mail ? 'bg-accent-soft/40 ring-accent' : 'bg-surface-2/60 ring-transparent'}`}>
+            <p className="pt-3 text-meta font-semibold uppercase tracking-wide text-ink-3">Only if you choose email through Exchange Online</p>
+            <ul>
+              <PermissionRow p={MAIL_PERMISSION} optional />
+            </ul>
+          </div>
+          <p className="text-meta text-ink-3">
+            All are application permissions approved once by you as administrator (admin consent). You can review or remove them any time under Microsoft Entra ID → App registrations → Trigon → API permissions.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button onClick={() => begin(true)}>
+              <Mail className="size-4" /> Yes, use Exchange Online
+            </Button>
+            <Button variant="secondary" onClick={() => begin(false)}>
+              {mailGranted ? 'No, remove email permission' : 'No, not now'}
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
+    );
+  }
 
   if (!confirmed && !active) {
     const ok = validPublicUrl(publicUrl);
@@ -88,10 +174,7 @@ function ConnectSheet({ open, onOpenChange, onNext, known }: { open: boolean; on
           <Button
             className="w-full"
             disabled={!ok}
-            onClick={() => {
-              setConfirmed(true);
-              start.mutate(new URL(publicUrl).origin);
-            }}
+            onClick={() => setStage('mail')}
           >
             <Check className="size-4" /> This address is correct, continue
           </Button>
@@ -159,12 +242,21 @@ function ConnectSheet({ open, onOpenChange, onNext, known }: { open: boolean; on
           >
             <Users className="size-4" /> Next: choose who gets access
           </Button>
+          {mail && (
+            <Link
+              href="/settings/email"
+              onClick={() => onOpenChange(false)}
+              className="press flex w-full items-center justify-center gap-2 rounded-pill bg-surface-2 px-4 py-2.5 text-sm font-semibold hover:bg-surface-3"
+            >
+              <Mail className="size-4" /> Set up email: choose the sender mailbox
+            </Link>
+          )}
         </div>
       )}
       {((s?.state === 'error' && !start.isPending) || start.error) && (
         <div className="mt-5 space-y-3">
           <Result result={{ ok: false, message: start.error?.message ?? s?.message ?? 'Something went wrong' }} />
-          <Button onClick={() => setConfirmed(false)}>
+          <Button onClick={() => setStage('address')}>
             Try again
           </Button>
         </div>
@@ -216,12 +308,21 @@ export default function EntraSettingsPage() {
   const dir = useDirectoryStatus();
   const [form, setForm] = useState<EntraSettings | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [mailRequested, setMailRequested] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const disconnect = useDisconnectEntra();
 
   useEffect(() => {
     if (data) setForm({ ...data.entra, clientSecret: '' });
   }, [data]);
+
+  // Settings → Email links here with ?connect=mail to add the Exchange Online permission.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('connect') !== 'mail') return;
+    setMailRequested(true);
+    setConnectOpen(true);
+    window.history.replaceState(null, '', window.location.pathname);
+  }, []);
 
   if (!data || !form) return <div className="h-60 animate-pulse rounded-card bg-surface" />;
   const set = (patch: Partial<EntraSettings>) => setForm((f) => ({ ...f!, ...patch }));
@@ -355,7 +456,14 @@ export default function EntraSettingsPage() {
         </form>
       </SettingsCard>
 
-      <ConnectSheet open={connectOpen} onOpenChange={setConnectOpen} onNext={() => setScopeOpen(true)} known={data.entra.signInOrigins ?? []} />
+      <ConnectSheet
+        open={connectOpen}
+        onOpenChange={setConnectOpen}
+        onNext={() => setScopeOpen(true)}
+        known={data.entra.signInOrigins ?? []}
+        mailDefault={mailRequested || !!data.entra.mailSend}
+        mailGranted={!!data.entra.mailSend}
+      />
       <EntraScopeSheet
         open={scopeOpen}
         onOpenChange={setScopeOpen}

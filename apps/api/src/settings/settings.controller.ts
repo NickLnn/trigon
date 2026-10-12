@@ -1,13 +1,14 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, Post, Put, Query } from '@nestjs/common';
-import type { AllSettings, DirectoryPick, EntraSettings, LdapSettings } from '@trigon/shared';
+import type { AllSettings, DirectoryPick, EmailMicrosoftStatus, EmailSettings, EntraSettings, LdapSettings } from '@trigon/shared';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { CronJob } from 'cron';
 import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { EntraClientService, GRAPH } from '../directory/entra-client.service';
 import { EntraRedirectService } from '../directory/entra-redirect.service';
 import { LdapService } from '../directory/ldap.service';
+import { EmailService } from '../email/email.service';
 import { EntraProvisionerService } from './entra-provisioner.service';
 import { SettingsService } from './settings.service';
 
@@ -62,6 +63,25 @@ function assertCron(expr: string) {
 class ProvisionDto {
   /** The HTTPS address people open Trigon at, confirmed by the admin. */
   @IsString() @MaxLength(300) publicUrl: string;
+  /** Also grant Mail.Send so Trigon can send email through Exchange Online. */
+  @IsOptional() @IsBoolean() mail?: boolean;
+}
+
+class EmailDto {
+  @IsIn(['none', 'smtp', 'microsoft']) provider: EmailSettings['provider'];
+  @ValidateIf((o: EmailDto) => o.provider !== 'none') @IsEmail() fromAddress: string;
+  @IsString() @MaxLength(120) fromName: string;
+  @IsString() @MaxLength(255) smtpHost: string;
+  @IsInt() @Min(1) @Max(65535) smtpPort: number;
+  @IsIn(['tls', 'starttls', 'none']) smtpSecurity: EmailSettings['smtpSecurity'];
+  @IsString() @MaxLength(255) smtpUser: string;
+  @IsOptional() @IsString() @MaxLength(500) smtpPassword?: string;
+  @IsBoolean() smtpTlsRejectUnauthorized: boolean;
+}
+
+class EmailTestDto extends EmailDto {
+  /** Where to send the test message. */
+  @IsEmail() to: string;
 }
 
 @Controller('settings')
@@ -74,6 +94,7 @@ export class SettingsController {
     private readonly entraClient: EntraClientService,
     private readonly redirects: EntraRedirectService,
     private readonly activity: ActivityService,
+    private readonly email: EmailService,
   ) {}
 
   /** Only which fields were saved is logged, never their values (they include secrets). */
@@ -94,6 +115,7 @@ export class SettingsController {
       general: await this.settings.getPublic('general'),
       entra: await this.settings.getPublic('entra'),
       ldap: await this.settings.getPublic('ldap'),
+      email: await this.settings.getPublic('email'),
       info: {
         appUrl,
         entraRedirectUri: signIn.redirectUris[0] ?? '',
@@ -124,6 +146,27 @@ export class SettingsController {
     await this.settings.update('ldap', dto as Partial<LdapSettings>, user.id);
     this.recordSave(user.id, 'LDAP / Active Directory', dto);
     return this.settings.getPublic('ldap');
+  }
+
+  @Put('email')
+  async emailSave(@CurrentUser() user: AuthUser, @Body() dto: EmailDto) {
+    await this.settings.update('email', dto as Partial<EmailSettings>, user.id);
+    this.recordSave(user.id, 'Email', dto);
+    return this.settings.getPublic('email');
+  }
+
+  /** Send a test message with the settings on screen (stored password used when the field is empty). */
+  @Post('email/test')
+  @HttpCode(200)
+  async emailTest(@Body() dto: EmailTestDto) {
+    const { to, ...form } = dto;
+    return this.email.test(form as EmailSettings, to);
+  }
+
+  /** Whether the Entra app may send mail (Mail.Send). */
+  @Get('email/microsoft')
+  emailMicrosoft(): Promise<EmailMicrosoftStatus> {
+    return this.email.microsoftStatus();
   }
 
   /** Save which groups / users Microsoft sync imports (the "who gets access" picker). */
@@ -192,7 +235,7 @@ export class SettingsController {
   @Post('entra/provision')
   @HttpCode(200)
   provision(@CurrentUser() user: AuthUser, @Body() dto: ProvisionDto) {
-    return this.provisioner.start(user.id, dto.publicUrl);
+    return this.provisioner.start(user.id, dto.publicUrl, dto.mail ?? false);
   }
 
   @Post('entra/disconnect')
