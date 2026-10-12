@@ -99,6 +99,9 @@ export function Sidebar() {
         <Link href="/" className={navItem(pathname === '/')}>
           <Home className="size-[1.125rem]" /> Home
         </Link>
+        <Link href="/spaces" className={navItem(pathname === '/spaces')}>
+          <LayoutGrid className="size-[1.125rem]" /> All spaces
+        </Link>
         <Link href="/search" className={navItem(pathname.startsWith('/search'))}>
           <Search className="size-[1.125rem]" /> Search
           <kbd className="ml-auto rounded-md bg-navy-2 px-1.5 py-0.5 font-sans text-[0.6875rem] text-navy-ink-3">Ctrl K</kbd>
@@ -107,14 +110,6 @@ export function Sidebar() {
           <CircleCheck className="size-[1.125rem]" /> Review
           {reviewCount > 0 && <span className="ml-auto rounded-full bg-[#3a2a10] px-2 text-[0.6875rem] font-semibold text-navy-warn">{reviewCount}</span>}
         </Link>
-        <Link href="/spaces" className={navItem(pathname === '/spaces')}>
-          <LayoutGrid className="size-[1.125rem]" /> All spaces
-        </Link>
-        {user?.role !== 'viewer' && (
-          <Link href="/trash" className={navItem(pathname === '/trash' || pathname.endsWith('/trash'))}>
-            <Trash2 className="size-[1.125rem]" /> Trash
-          </Link>
-        )}
         {user?.role === 'admin' && (
           <>
             <Link href="/activity" className={navItem(pathname.startsWith('/activity'))}>
@@ -124,6 +119,11 @@ export function Sidebar() {
               <Settings className="size-[1.125rem]" /> Settings
             </Link>
           </>
+        )}
+        {user?.role !== 'viewer' && (
+          <Link href="/trash" className={navItem(pathname === '/trash' || pathname.endsWith('/trash'))}>
+            <Trash2 className="size-[1.125rem]" /> Trash
+          </Link>
         )}
       </nav>
 
