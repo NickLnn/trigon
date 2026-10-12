@@ -1,11 +1,11 @@
 import { Controller, Delete, Get, Injectable, Logger, NotFoundException, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import type { TrashItem } from '@trigon/shared';
+import { atLeast, type TrashItem } from '@trigon/shared';
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
-import { attachments, documents, users } from '../db/schema';
+import { attachments, documents, spaces, users } from '../db/schema';
 import { StorageService } from '../files/storage.service';
 import { PermissionsService } from '../permissions/permissions.service';
 
@@ -75,10 +75,24 @@ export class TrashController {
     private readonly activity: ActivityService,
   ) {}
 
-  /** Top-level deleted items (things deleted with their folder are listed under it, not separately). */
+  /** Trash of one space. */
   @Get('spaces/:id/trash')
   async list(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) spaceId: string): Promise<TrashItem[]> {
     await this.perms.assertSpace(user, spaceId, 'edit');
+    return this.items([spaceId]);
+  }
+
+  /** Trash of every space the user can edit (sidebar → Trash). */
+  @Get('trash')
+  async all(@CurrentUser() user: AuthUser): Promise<TrashItem[]> {
+    if (user.role === 'admin') return this.items(null);
+    const levels = await this.perms.spaceLevels(user);
+    const editable = [...levels].filter(([, level]) => atLeast(level, 'edit')).map(([id]) => id);
+    return editable.length ? this.items(editable) : [];
+  }
+
+  /** Top-level deleted items (things deleted with their folder are listed under it, not separately). */
+  private async items(spaceIds: string[] | null): Promise<TrashItem[]> {
     const rows = await this.db.execute<{
       id: string;
       title: string;
@@ -90,17 +104,21 @@ export class TrashController {
       deleted_by: string | null;
       location: string | null;
       inside: number;
+      space_id: string;
+      space_name: string;
     }>(sql`
       SELECT d.id, d.title, d.kind, d.icon, d.mime_type, d.page_type, d.deleted_at, u.display_name AS deleted_by,
-             p.title AS location,
+             p.title AS location, s.id AS space_id, s.name AS space_name,
              (WITH RECURSIVE sub AS (
                 SELECT c.id, c.deleted_at FROM ${documents} c WHERE c.parent_id = d.id AND c.deleted_at = d.deleted_at
                 UNION ALL SELECT c.id, c.deleted_at FROM ${documents} c JOIN sub ON c.parent_id = sub.id WHERE c.deleted_at = sub.deleted_at
               ) SELECT count(*)::int FROM sub) AS inside
       FROM ${documents} d
+      JOIN ${spaces} s ON s.id = d.space_id
       LEFT JOIN ${documents} p ON p.id = d.parent_id
       LEFT JOIN ${users} u ON u.id = d.deleted_by_id
-      WHERE d.space_id = ${spaceId} AND d.deleted_at IS NOT NULL
+      WHERE d.deleted_at IS NOT NULL
+        ${spaceIds ? sql`AND d.space_id IN ${spaceIds}` : sql``}
         AND (p.id IS NULL OR p.deleted_at IS NULL OR p.deleted_at <> d.deleted_at)
       ORDER BY d.deleted_at DESC
       LIMIT 500`);
@@ -119,6 +137,8 @@ export class TrashController {
         inside: r.inside,
         location: r.location,
         purgeAt: new Date(deletedAt.getTime() + days * 86_400_000).toISOString(),
+        spaceId: r.space_id,
+        spaceName: r.space_name,
       };
     });
   }

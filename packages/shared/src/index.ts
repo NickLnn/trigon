@@ -407,6 +407,8 @@ export interface TrashItem {
   location: string | null;
   /** When it is removed for good. */
   purgeAt: string;
+  spaceId: string;
+  spaceName: string;
 }
 
 /** "Ask for review": one person asked another to check a page or file. */
