@@ -275,7 +275,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
           </a>
         </div>
         <div className="border-b border-line px-3 py-2 empty:hidden">
-          <ReviewBanner documentId={doc.id} />
+          <ReviewBanner documentId={doc.id} canEdit={canEdit} />
         </div>
         <div className="min-h-0 flex-1">
           {flavor === 'pdf' && <PdfViewer fileUrl={contentUrl} />}
@@ -353,7 +353,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
             </span>
           </div>
           <div className="mt-4">
-            <ReviewBanner documentId={doc.id} />
+            <ReviewBanner documentId={doc.id} canEdit={canEdit} />
           </div>
           <div className="mt-5">
             <CollaborativeEditor

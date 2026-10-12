@@ -13,7 +13,7 @@ import { PermissionsService } from '../permissions/permissions.service';
 class AskDto {
   @IsUUID() reviewerId: string;
   @IsOptional() @IsString() @MaxLength(1000) message?: string;
-  /** The reviewer can't open the item yet: give them view access (needs 'manage' on it). */
+  /** The reviewer can't edit the item yet: give them edit access (needs 'manage' on it). */
   @IsOptional() @IsBoolean() shareAccess?: boolean;
 }
 
@@ -71,9 +71,10 @@ const toRequest = (r: Row): ReviewRequest => ({
 });
 
 /**
- * "Ask for review": anyone who can edit a page or file asks a colleague to check it. The reviewer
- * approves (the item becomes verified, in their name — view access is enough for that) or asks for
- * changes (it goes back to draft). Both sides are emailed and everything lands in the activity log.
+ * "Ask for review": anyone who can edit a page or file asks a colleague to check it. The reviewer needs
+ * edit access — they may fix things themselves — and approves (the item becomes verified, in their name)
+ * or asks for changes (it goes back to draft). Both sides are emailed and everything lands in the
+ * activity log.
  */
 @Controller()
 export class ReviewsController {
@@ -115,24 +116,42 @@ export class ReviewsController {
     if (!person || !person.active) throw new NotFoundException('That person is not an active Trigon user.');
 
     const { level } = await this.perms.documentLevel({ id: person.id, email: person.email, role: person.role }, id);
-    if (!atLeast(level, 'view')) {
+    if (!atLeast(level, 'edit')) {
+      const name = person.displayName;
+      const now = !level ? `can’t open this ${doc.kind}` : `can only ${level === 'comment' ? 'view and comment on' : 'view'} this ${doc.kind}`;
+      // The Viewer role is read-only everywhere, so no share can fix it — only an admin changing the role.
+      if (person.role === 'viewer') {
+        throw new ConflictException({
+          code: 'no_access',
+          canShare: false,
+          message: `${name} ${now}. Reviewers need edit access to make changes, and ${name} has the Viewer role in Trigon, which is read-only everywhere. An administrator must change their role to Editor first (Settings → Users).`,
+        });
+      }
       const canShare = atLeast(myLevel, 'manage');
       if (!dto.shareAccess || !canShare) {
         throw new ConflictException({
           code: 'no_access',
           canShare,
           message: canShare
-            ? `${person.displayName} can’t open this ${doc.kind} yet.`
-            : `${person.displayName} can’t open this ${doc.kind}. Ask someone who manages it to share it with them first.`,
+            ? `${name} ${now}. To review it and make changes they need edit access.`
+            : `${name} ${now}. To review it and make changes they need edit access — ask someone who manages this ${doc.kind} to give it to them, then send the request again.`,
         });
       }
-      await this.perms.grant({ resourceType: 'document', resourceId: id, subjectType: 'user', subjectId: person.id, level: 'view', grantedById: user.id });
+      const previous = level;
+      await this.perms.grant({ resourceType: 'document', resourceId: id, subjectType: 'user', subjectId: person.id, level: 'edit', grantedById: user.id });
       this.activity.record({
-        action: 'share.added',
+        action: previous ? 'share.changed' : 'share.added',
         actorId: user.id,
         spaceId,
         target: { type: doc.kind, id, name: doc.title },
-        details: { sharedWith: `${person.displayName} (${person.email})`, sharedWithType: 'user', sharedWithId: person.id, level: 'view', reason: 'Review request' },
+        details: {
+          sharedWith: `${person.displayName} (${person.email})`,
+          sharedWithType: 'user',
+          sharedWithId: person.id,
+          level: 'edit',
+          ...(previous ? { previousLevel: previous } : {}),
+          reason: 'Review request',
+        },
       });
     }
 
@@ -194,12 +213,21 @@ export class ReviewsController {
     return req;
   }
 
+  /** Reviewers must (still) be able to edit — access may have changed since they were asked. */
+  private async reviewerAccess(user: AuthUser, documentId: string) {
+    const { level, spaceId } = await this.perms.documentLevel(user, documentId);
+    if (!atLeast(level, 'edit')) {
+      throw new ForbiddenException('You need edit access to review this. Ask the person who requested the review, or whoever manages it, to give you edit access.');
+    }
+    return { spaceId };
+  }
+
   /** The reviewer approves: the item becomes verified in their name. */
   @Post('review-requests/:id/approve')
   async approve(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AnswerDto) {
     const req = await this.pendingFor(user, id);
     if (req.reviewerId !== user.id) throw new ForbiddenException('Only the person asked can approve this review.');
-    const { spaceId } = await this.perms.assertDocument(user, req.documentId, 'view');
+    const { spaceId } = await this.reviewerAccess(user, req.documentId);
     const note = dto.note?.trim() || null;
     const [doc] = await this.db
       .update(documents)
@@ -223,7 +251,7 @@ export class ReviewsController {
   async requestChanges(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ChangesDto) {
     const req = await this.pendingFor(user, id);
     if (req.reviewerId !== user.id) throw new ForbiddenException('Only the person asked can answer this review.');
-    const { spaceId } = await this.perms.assertDocument(user, req.documentId, 'view');
+    const { spaceId } = await this.reviewerAccess(user, req.documentId);
     const note = dto.note.trim();
     const [doc] = await this.db
       .update(documents)

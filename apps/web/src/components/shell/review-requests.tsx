@@ -131,7 +131,7 @@ export function AskReviewSheet({ open, onOpenChange, documentId, title }: { open
               <p>{ask.error.message}</p>
               {canShare && (
                 <button onClick={() => ask.mutate(true)} className="mt-2 font-semibold text-accent">
-                  Share view access with {picked?.displayName.split(' ')[0]} and send
+                  Give {picked?.displayName.split(' ')[0]} edit access and send
                 </button>
               )}
             </div>
@@ -190,7 +190,7 @@ export function ReviewersRow({ documentId, title, canAsk, canManage }: { documen
 }
 
 /** Shown on the item to the person asked: approve, or request changes with a note. */
-export function ReviewBanner({ documentId }: { documentId: string }) {
+export function ReviewBanner({ documentId, canEdit }: { documentId: string; canEdit: boolean }) {
   const { user } = useSession();
   const { data } = useDocReviewRequests(documentId);
   const refresh = useRefreshReviews(documentId);
@@ -222,7 +222,11 @@ export function ReviewBanner({ documentId }: { documentId: string }) {
           )}
         </div>
       </div>
-      {mode === 'idle' ? (
+      {!canEdit ? (
+        <p className="mt-3 rounded-xl bg-warning/12 px-3.5 py-2.5 text-sm">
+          You can only view this, but reviewing needs edit access so you can make changes. Ask {mine.requestedBy?.name ?? 'the person who asked'} to give you edit access.
+        </p>
+      ) : mode === 'idle' ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <button onClick={() => setMode('approve')} className="press inline-flex items-center gap-1.5 rounded-pill bg-accent px-4 py-2 text-sm font-semibold text-accent-ink">
             <Check className="size-4" /> Approve
