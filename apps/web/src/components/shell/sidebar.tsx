@@ -15,6 +15,7 @@ import { api } from '@/lib/api';
 import { useDocument, useSpaces } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 import { SpaceActions } from './node-actions';
+import { useMyReviewRequests } from './review-requests';
 import { SpaceTree, useSpaceRootDrop } from './space-tree';
 
 const navItem = (active: boolean) =>
@@ -73,7 +74,8 @@ export function Sidebar() {
   const currentSpace = params.spaceId ?? (params.docId ? doc?.spaceId : undefined);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [createIn, setCreateIn] = useState<string | null>(null);
-  const reviewCount = (health?.stale ?? 0) + (health?.drafts ?? 0);
+  const { data: asked } = useMyReviewRequests();
+  const reviewCount = (health?.stale ?? 0) + (health?.drafts ?? 0) + (asked?.length ?? 0);
 
   useEffect(() => {
     if (currentSpace) setExpanded((s) => new Set([...s, currentSpace]));

@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { relativeTime } from '@/components/ui/doc-icon';
 import { StatusBadge, TagChip } from '@/components/ui/status-badge';
 import { usePatchDocumentMeta, useVerifyDocument, type DocumentDetail } from '@/lib/queries';
+import { ReviewersRow } from './review-requests';
 
 const TYPES: { key: PageType; label: string }[] = [
   { key: 'page', label: 'Page' },
@@ -96,6 +97,7 @@ export function DocDetails({ doc }: { doc: DocumentDetail }) {
               Verified by {doc.verifiedByName} {relativeTime(doc.verifiedAt)}
             </p>
           )}
+          <ReviewersRow documentId={doc.id} title={doc.title} canAsk={canEdit} canManage={doc.myPermission === 'manage'} />
         </Row>
       )}
 

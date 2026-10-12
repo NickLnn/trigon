@@ -9,6 +9,7 @@ import { CreateSheet, type CreateStart } from '@/components/ui/create-sheet';
 import { DocIcon, relativeTime, SpaceIcon } from '@/components/ui/doc-icon';
 import { PullToRefresh } from '@/components/ui/pull-to-refresh';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { ReviewInbox, useMyReviewRequests } from '@/components/shell/review-requests';
 import { useHealth, useRecent, useSpaces } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 
@@ -55,6 +56,27 @@ function HealthCard({ children }: { children?: ReactNode }) {
         <span>{data?.drafts ?? 0} drafts</span>
       </div>
       {children}
+    </section>
+  );
+}
+
+/** Things colleagues asked me to review. */
+function WaitingForMe() {
+  const { data } = useMyReviewRequests();
+  return (
+    <section className="rounded-card bg-surface p-4 shadow-card">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 font-bold">
+          Waiting for your review
+          {!!data?.length && <span className="rounded-full bg-accent px-2 text-[0.6875rem] font-semibold text-accent-ink">{data.length}</span>}
+        </h2>
+        {!!data && data.length > 5 && (
+          <Link href="/review" className="text-sm font-semibold text-accent">
+            See all
+          </Link>
+        )}
+      </div>
+      <ReviewInbox limit={5} empty="Nobody has asked you to review anything." />
     </section>
   );
 }
@@ -174,6 +196,7 @@ export default function HomePage() {
           </div>
 
           <div className="space-y-5">
+            <WaitingForMe />
             <NeedsReview />
             {!!spaces?.length && (
               <section>

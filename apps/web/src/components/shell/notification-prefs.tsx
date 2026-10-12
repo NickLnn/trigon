@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { MyNotifications, NotificationPrefs } from '@trigon/shared';
-import { CircleCheck, Share2, ShieldCheck } from 'lucide-react';
+import { CircleCheck, Share2, ShieldCheck, UserCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { api } from '@/lib/api';
 
@@ -71,6 +71,9 @@ export function NotificationPrefsSection() {
       </p>
       <PrefRow icon={<Share2 className="size-4" />} title="Shared with me" hint="Someone gives you or your group access to a page, folder or space, or changes your access.">
         <Switch label="Shared with me" checked={data.prefs.shares} onChange={(v) => set({ shares: v })} />
+      </PrefRow>
+      <PrefRow icon={<UserCheck className="size-4" />} title="Review requests" hint="Someone asks you to review a page or file, or answers a review you asked for.">
+        <Switch label="Review requests" checked={data.prefs.reviews} onChange={(v) => set({ reviews: v })} />
       </PrefRow>
       <PrefRow icon={<ShieldCheck className="size-4" />} title="Account changes" hint="Your role changes, your account is deactivated or reactivated, or an admin sets your password.">
         <Switch label="Account changes" checked={data.prefs.account} onChange={(v) => set({ account: v })} />

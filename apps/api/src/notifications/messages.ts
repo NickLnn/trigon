@@ -167,6 +167,49 @@ export function digestEmail(i: { base: string; name: string; pages: DigestPage[]
   };
 }
 
+export interface ReviewItem {
+  id: string;
+  title: string;
+  kind: 'page' | 'folder' | 'file';
+  space: string;
+}
+
+export function reviewRequestEmail(i: { base: string; requester: { name: string; email: string | null }; item: ReviewItem; message: string | null }): EmailContent {
+  return {
+    subject: `${i.requester.name} asked you to review “${i.item.title}”`,
+    heading: `Review requested: ${i.item.title}`,
+    intro: `${i.requester.name} would like you to check this ${i.item.kind} and confirm it is correct. Open it in Trigon, then choose Approve or Request changes.`,
+    details: [
+      { label: i.item.kind[0].toUpperCase() + i.item.kind.slice(1), value: i.item.title },
+      { label: 'Space', value: i.item.space },
+      { label: 'Requested by', value: i.requester.email ? `${i.requester.name} (${i.requester.email})` : i.requester.name },
+      ...(i.message ? [{ label: 'Message', value: i.message }] : []),
+    ],
+    action: { label: `Review ${i.item.kind}`, url: `${i.base}/d/${i.item.id}` },
+    note: 'It also waits for you on your Trigon home page under “Waiting for your review”.',
+    reason: 'You received this because “Review requests” emails are on.',
+  };
+}
+
+export function reviewAnsweredEmail(i: { base: string; reviewer: string; item: ReviewItem; approved: boolean; note: string | null }): EmailContent {
+  return {
+    subject: i.approved ? `${i.reviewer} approved “${i.item.title}”` : `${i.reviewer} asked for changes to “${i.item.title}”`,
+    heading: i.approved ? 'Your review request was approved' : 'Changes requested',
+    intro: i.approved
+      ? `${i.reviewer} reviewed “${i.item.title}” and approved it. It is now marked as verified.`
+      : `${i.reviewer} reviewed “${i.item.title}” and asked for changes before approving it. It is now marked as a draft.`,
+    details: [
+      { label: i.item.kind[0].toUpperCase() + i.item.kind.slice(1), value: i.item.title },
+      { label: 'Space', value: i.item.space },
+      { label: 'Reviewed by', value: i.reviewer },
+      { label: 'Result', value: i.approved ? 'Approved' : 'Changes requested' },
+      ...(i.note ? [{ label: i.approved ? 'Comment' : 'Requested changes', value: i.note }] : []),
+    ],
+    action: { label: `Open ${i.item.kind}`, url: `${i.base}/d/${i.item.id}` },
+    reason: 'You received this because “Review requests” emails are on.',
+  };
+}
+
 export function testEmail(i: { base: string; method: string; to: string }): EmailContent {
   return {
     subject: 'Trigon test email',

@@ -1,13 +1,14 @@
 'use client';
 
 import { isTextFile } from '@trigon/shared';
-import { ArrowLeft, Check, ChevronRight, CloudOff, Download, Info, Loader2, PanelRightClose, PanelRightOpen, Share2, Smile } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, CloudOff, Download, Info, Loader2, PanelRightClose, PanelRightOpen, Share2, Smile, UserCheck } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectionStatus, OutlineItem, Peer, SaveState } from '@/components/editor/collaborative-editor';
 import { DocDetails, VerifyButton } from '@/components/shell/doc-details';
+import { AskReviewSheet, ReviewBanner } from '@/components/shell/review-requests';
 import { ShareSheet } from '@/components/shell/share-sheet';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { CustomIcon, fileFlavor, relativeTime } from '@/components/ui/doc-icon';
@@ -204,7 +205,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
   const [conn, setConn] = useState<ConnectionStatus>('connecting');
   const [peers, setPeers] = useState<Peer[]>([]);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
-  const [sheet, setSheet] = useState<'share' | 'details' | null>(null);
+  const [sheet, setSheet] = useState<'share' | 'details' | 'review' | null>(null);
   const [railOpen, toggleRail] = useRail();
   const [saveState, setSaveState] = useState<SaveState>('saving');
   const onStatus = useCallback((s: ConnectionStatus) => setConn(s), []);
@@ -217,6 +218,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
   const sheets = (
     <>
       {sheet === 'share' && <ShareSheet open onOpenChange={(v) => !v && setSheet(null)} type="document" id={doc.id} name={doc.title} />}
+      <AskReviewSheet open={sheet === 'review'} onOpenChange={(v) => !v && setSheet(null)} documentId={doc.id} title={doc.title} />
       <BottomSheet open={sheet === 'details'} onOpenChange={(v) => !v && setSheet(null)} title="Details">
         <DocDetails doc={doc} />
       </BottomSheet>
@@ -260,12 +262,20 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
               {relativeTime(doc.updatedAt)}
             </p>
           </div>
+          {canEdit && (
+            <button onClick={() => setSheet('review')} className="press grid size-9 place-items-center rounded-full hover:bg-surface-2" aria-label="Ask for review" title="Ask for review">
+              <UserCheck className="size-5" />
+            </button>
+          )}
           <button onClick={() => setSheet('share')} className="press grid size-9 place-items-center rounded-full hover:bg-surface-2" aria-label="Share">
             <Share2 className="size-5" />
           </button>
           <a href={`/api${contentUrl}`} download={doc.title} className="press grid size-9 place-items-center rounded-full hover:bg-surface-2" aria-label="Download">
             <Download className="size-5" />
           </a>
+        </div>
+        <div className="border-b border-line px-3 py-2 empty:hidden">
+          <ReviewBanner documentId={doc.id} />
         </div>
         <div className="min-h-0 flex-1">
           {flavor === 'pdf' && <PdfViewer fileUrl={contentUrl} />}
@@ -341,6 +351,9 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
               {relativeTime(doc.updatedAt)}
               {!canEdit && ' · View only'}
             </span>
+          </div>
+          <div className="mt-4">
+            <ReviewBanner documentId={doc.id} />
           </div>
           <div className="mt-5">
             <CollaborativeEditor

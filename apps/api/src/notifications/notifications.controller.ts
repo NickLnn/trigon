@@ -12,6 +12,7 @@ class PrefsDto {
   @IsBoolean() shares: boolean;
   @IsBoolean() account: boolean;
   @IsIn(['off', 'daily', 'weekly']) reviewDigest: 'off' | 'daily' | 'weekly';
+  @IsBoolean() reviews: boolean;
 }
 
 /** Profile → Notifications: each person's own email choices. */

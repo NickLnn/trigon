@@ -39,6 +39,7 @@ export const documentKind = pgEnum('document_kind', ['folder', 'page', 'file']);
 export const pageType = pgEnum('page_type', ['page', 'runbook', 'kb']);
 export const docStatus = pgEnum('doc_status', ['none', 'draft', 'verified']);
 export const resourceType = pgEnum('resource_type', ['space', 'document']);
+export const reviewStatus = pgEnum('review_status', ['pending', 'approved', 'changes_requested', 'cancelled']);
 export const spaceSort = pgEnum('space_sort', ['alpha', 'manual']);
 export const subjectType = pgEnum('subject_type', ['user', 'group', 'everyone']);
 
@@ -302,6 +303,27 @@ export const settings = pgTable('settings', {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+/** "Ask for review": one person asks another to check a page or file; the reviewer approves or asks for changes. */
+export const reviewRequests = pgTable(
+  'review_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => documents.id, { onDelete: 'cascade' }),
+    requestedById: uuid('requested_by_id').references(() => users.id, { onDelete: 'set null' }),
+    reviewerId: uuid('reviewer_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    status: reviewStatus('status').notNull().default('pending'),
+    message: text('message'),
+    response: text('response'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+  },
+  (t) => [index('review_requests_reviewer_idx').on(t.reviewerId, t.status), index('review_requests_document_idx').on(t.documentId, t.status)],
+);
 
 /**
  * Audit log for the Activity explorer. Names are copied at write time so the history stays readable
