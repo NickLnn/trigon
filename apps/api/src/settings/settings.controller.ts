@@ -14,8 +14,27 @@ import { EntraProvisionerService } from './entra-provisioner.service';
 import { SettingsService } from './settings.service';
 
 class GeneralDto {
-  @IsBoolean()
-  allowLocalSignup: boolean;
+  @IsOptional() @IsBoolean() allowLocalSignup?: boolean;
+  /** Full addresses; reduced to scheme://host[:port]. Empty clears. */
+  @IsOptional() @IsString() @MaxLength(300) internalUrl?: string;
+  @IsOptional() @IsString() @MaxLength(300) publicUrl?: string;
+  @IsOptional() @IsBoolean() setupDone?: boolean;
+}
+
+/** "trigon.example.com/" → "https://trigon.example.com"; rejects anything that isn't http(s). */
+export function originOf(raw: string | undefined, field: string): string | undefined {
+  if (raw === undefined) return undefined;
+  const v = raw.trim();
+  if (!v) return '';
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v) && !/^https?:\/\//i.test(v)) throw new BadRequestException(`"${v}" must start with http:// or https://`);
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(v) ? v : `${field === 'publicUrl' ? 'https' : 'http'}://${v}`);
+  } catch {
+    throw new BadRequestException(`"${v}" is not a web address.`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new BadRequestException(`"${v}" must start with http:// or https://`);
+  return url.origin;
 }
 
 class PickDto {
@@ -110,17 +129,18 @@ export class SettingsController {
 
   @Get()
   async all(): Promise<AllSettings> {
-    const appUrl = this.settings.appUrl();
     const signIn = await this.redirects.ensure();
+    const publicUrl = await this.settings.knownPublicUrl();
     return {
       general: await this.settings.getPublic('general'),
       entra: await this.settings.getPublic('entra'),
       ldap: await this.settings.getPublic('ldap'),
       email: await this.settings.getPublic('email'),
       info: {
-        appUrl,
-        entraRedirectUri: signIn.redirectUris[0] ?? '',
-        httpsWarning: !appUrl.startsWith('https://') && !appUrl.includes('localhost'),
+        internalUrl: await this.settings.internalUrl(),
+        publicUrl,
+        entraRedirectUri: publicUrl?.startsWith('https://') ? `${publicUrl}/api/auth/entra/callback` : (signIn.redirectUris[0] ?? ''),
+        httpsWarning: !publicUrl?.startsWith('https://'),
         entraSignIn: signIn,
       },
     };
@@ -128,7 +148,11 @@ export class SettingsController {
 
   @Put('general')
   async general(@CurrentUser() user: AuthUser, @Body() dto: GeneralDto) {
-    await this.settings.update('general', dto, user.id);
+    const patch = { ...dto, internalUrl: originOf(dto.internalUrl, 'internalUrl'), publicUrl: originOf(dto.publicUrl, 'publicUrl') };
+    for (const k of ['internalUrl', 'publicUrl'] as const) if (patch[k] === undefined) delete patch[k];
+    await this.settings.update('general', patch, user.id);
+    // A public HTTPS address is also where Microsoft sign-in has to send people back to.
+    if (patch.publicUrl?.startsWith('https://')) await this.redirects.confirmOrigin(patch.publicUrl).catch(() => undefined);
     this.recordSave(user.id, 'General', dto);
     return this.settings.getPublic('general');
   }

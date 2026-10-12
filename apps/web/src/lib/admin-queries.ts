@@ -11,7 +11,7 @@ type SectionValue<K> = K extends 'general' ? GeneralSettings : K extends 'entra'
 export function useSaveSettings<K extends 'general' | 'entra' | 'ldap' | 'email'>(section: K) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (value: SectionValue<K>) =>
+    mutationFn: (value: K extends 'general' ? Partial<GeneralSettings> : SectionValue<K>) =>
       api(`/settings/${section}`, { method: 'PUT', json: value }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['settings'] });

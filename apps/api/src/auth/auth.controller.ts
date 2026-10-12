@@ -148,7 +148,7 @@ export class AuthController {
     }
     res.clearCookie(OIDC_COOKIE, { path: '/' });
     // The signed state names the (trusted) address the sign-in started from.
-    const base = login?.origin ?? new URL(this.settings.appUrl()).origin;
+    const base = login?.origin ?? new URL(await this.settings.publicUrl()).origin;
     if (q.error) return res.redirect(`${base}/login?error=${encodeURIComponent(q.error_description ?? q.error)}`);
 
     try {

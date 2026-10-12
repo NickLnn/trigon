@@ -69,7 +69,12 @@ export class SettingsService {
   private defaults(): SettingsMap {
     const env = (k: string, d = '') => this.config.get<string>(k) ?? d;
     return {
-      general: { allowLocalSignup: env('ALLOW_LOCAL_SIGNUP', 'true') !== 'false' },
+      general: {
+        allowLocalSignup: env('ALLOW_LOCAL_SIGNUP', 'true') !== 'false',
+        internalUrl: env('APP_URL'),
+        publicUrl: env('PUBLIC_URL'),
+        setupDone: false,
+      },
       entra: {
         enabled: env('ENTRA_ENABLED') === 'true',
         tenantId: env('ENTRA_TENANT_ID'),
@@ -189,9 +194,21 @@ export class SettingsService {
     return this.config.get<string>('APP_URL') ?? 'http://localhost:3000';
   }
 
-  /** The address to put in emails: the public HTTPS one people sign in at, else APP_URL. */
-  async publicUrl(): Promise<string> {
+  /** Where Trigon is reached on the LAN: Settings → General, else APP_URL. */
+  async internalUrl(): Promise<string> {
+    return (await this.get('general')).internalUrl || this.appUrl();
+  }
+
+  /** The public HTTPS address if one is known (set in General, or learned from an admin's browser). */
+  async knownPublicUrl(): Promise<string | null> {
+    const set = (await this.get('general')).publicUrl;
+    if (set) return set;
     const origins = (await this.get('entra')).signInOrigins ?? [];
-    return origins.find((o) => o.startsWith('https://')) ?? this.appUrl();
+    return origins.find((o) => o.startsWith('https://')) ?? null;
+  }
+
+  /** The address to put in emails and links: the public one when known, else the internal one. */
+  async publicUrl(): Promise<string> {
+    return (await this.knownPublicUrl()) ?? (await this.internalUrl());
   }
 }
