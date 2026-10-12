@@ -8,6 +8,7 @@ import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { SettingsService } from '../settings/settings.service';
 import { BackupService } from './backup.service';
+import { normalizeSmb } from './destinations';
 
 class BackupSettingsDto {
   @IsBoolean() enabled: boolean;
@@ -57,7 +58,8 @@ export class BackupsController {
       }
     }
     if (dto.destination === 'local' && !dto.localPath.startsWith('/')) throw new BadRequestException('The folder must be an absolute path inside the container, e.g. /data/backups');
-    await this.settings.update('backup', dto as Partial<BackupSettings>, user.id);
+    const clean = dto.destination === 'smb' ? normalizeSmb(dto as BackupSettings) : dto;
+    await this.settings.update('backup', clean as Partial<BackupSettings>, user.id);
     this.activity.record({ action: 'settings.updated', actorId: user.id, target: { type: 'settings', id: null, name: 'Backups' }, details: { fields: Object.keys(dto) } });
     return this.backups.overview();
   }

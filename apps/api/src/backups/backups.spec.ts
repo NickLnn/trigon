@@ -25,3 +25,13 @@ test('NFS compose snippet uses the server and export', () => {
   assert.ok(s.includes('device: ":/volume1/backups/trigon"'));
   assert.ok(s.includes('trigon-backups-nfs:/data/backups-nfs'));
 });
+
+test('SMB share names are cleaned up from whatever was typed or pasted', async () => {
+  const { normalizeSmb } = await import('./destinations');
+  const base = { smbHost: '192.168.xxx.xxx', smbShare: '', smbPath: 'trigon' } as never as Parameters<typeof normalizeSmb>[0];
+  const pick = (s: ReturnType<typeof normalizeSmb>) => [s.smbHost, s.smbShare, s.smbPath];
+  assert.deepEqual(pick(normalizeSmb({ ...base, smbShare: '/Nickology Backup' })), ['192.168.xxx.xxx', 'Nickology Backup', 'trigon']);
+  assert.deepEqual(pick(normalizeSmb({ ...base, smbShare: String.raw`\\192.168.xxx.xxx\Nickology Backup\Trigon`, smbPath: '' })), ['192.168.xxx.xxx', 'Nickology Backup', 'Trigon']);
+  assert.deepEqual(pick(normalizeSmb({ ...base, smbHost: 'smb://nas.local/Backups/trigon', smbShare: '', smbPath: '' })), ['nas.local', 'Backups', 'trigon']);
+  assert.deepEqual(pick(normalizeSmb({ ...base, smbShare: 'Backups/nightly', smbPath: 'trigon' })), ['192.168.xxx.xxx', 'Backups', 'nightly/trigon']);
+});

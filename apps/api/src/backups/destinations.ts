@@ -129,11 +129,35 @@ export class FolderDestination implements Destination {
  * An SMB/CIFS share, reached with smbclient — no mount, so the container needs no extra privileges.
  * Credentials go in a temporary 0600 auth file, never on the command line.
  */
+/**
+ * Accept what people paste: "\\nas\Share\folder", "smb://nas/Share", "/Share", "Share/sub" — split into
+ * server, share and folder.
+ */
+export function normalizeSmb(s: BackupSettings): BackupSettings {
+  const clean = (v: string) => v.trim().replace(/\\/g, '/');
+  let host = clean(s.smbHost).replace(/^smb:\/\//i, '').replace(/^\/+/, '');
+  let rest = clean(s.smbShare).replace(/^smb:\/\//i, '');
+  // A full path in the server field: nas/Share/folder
+  if (host.includes('/')) {
+    const [h, ...more] = host.split('/').filter(Boolean);
+    host = h ?? '';
+    if (more.length) rest = more.join('/') + (rest ? `/${rest}` : '');
+  }
+  // A full path in the share field: //nas/Share/folder (with the same server) or /Share/folder
+  if (rest.startsWith('//')) rest = rest.replace(/^\/\/[^/]+\//, '');
+  const parts = rest.split('/').filter(Boolean);
+  const share = parts.shift() ?? '';
+  const folder = [...parts, ...clean(s.smbPath).split('/').filter(Boolean)].join('/');
+  return { ...s, smbHost: host, smbShare: share, smbPath: folder };
+}
+
 export class SmbDestination implements Destination {
   readonly label: string;
   private readonly bin = process.env.SMBCLIENT_BIN || 'smbclient';
+  private readonly s: BackupSettings;
 
-  constructor(private readonly s: BackupSettings) {
+  constructor(settings: BackupSettings) {
+    const s = (this.s = normalizeSmb(settings));
     this.label = `\\\\${s.smbHost}\\${s.smbShare}${s.smbPath ? `\\${s.smbPath.replace(/\//g, '\\')}` : ''}`;
   }
 
