@@ -2,7 +2,7 @@
 
 import type { EmailProvider, EmailSettings } from '@trigon/shared';
 import { useQuery } from '@tanstack/react-query';
-import { Check, Copy, Eye, Mail, Send, Server, Sparkles } from 'lucide-react';
+import { Check, Copy, Eye, Mail, MailX, Send, Server, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
@@ -10,10 +10,47 @@ import { useEmailMicrosoftStatus, useEmailTest, useSaveSettings, useSettings } f
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
-const PROVIDERS: { value: EmailProvider; label: string; hint: string; icon: ReactNode }[] = [
-  { value: 'none', label: 'Off', hint: 'Trigon sends no email.', icon: <Mail className="size-4" /> },
-  { value: 'smtp', label: 'SMTP server', hint: 'Any mail server or relay: your own, Microsoft 365 SMTP, Gmail, SendGrid…', icon: <Server className="size-4" /> },
-  { value: 'microsoft', label: 'Microsoft 365', hint: 'Exchange Online through the Trigon app registration. No SMTP needed.', icon: <Sparkles className="size-4" /> },
+function MicrosoftLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 21 21" className={className} aria-hidden>
+      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+    </svg>
+  );
+}
+
+/** Provider marks: Microsoft 365 uses Microsoft's own Outlook icon; SMTP isn't a brand, so it gets a neutral mail-server tile. */
+const PROVIDER_ICON: Record<EmailProvider, ReactNode> = {
+  none: (
+    <span className="grid size-11 place-items-center rounded-2xl bg-surface-3 text-ink-3">
+      <MailX className="size-5" />
+    </span>
+  ),
+  smtp: (
+    <span className="relative grid size-11 place-items-center rounded-2xl bg-gradient-to-br from-[#5b6b8c] to-[#2e3a55] text-white shadow-sm">
+      <Mail className="size-5" />
+      <span className="absolute -bottom-1 -right-1 grid size-5 place-items-center rounded-md bg-surface text-ink-2 shadow-sm ring-1 ring-line">
+        <Server className="size-3" />
+      </span>
+    </span>
+  ),
+  microsoft: (
+    <span className="relative grid size-11 place-items-center rounded-2xl bg-white shadow-sm ring-1 ring-line">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/brand/outlook.svg" alt="" width={30} height={30} draggable={false} />
+      <span className="absolute -bottom-1 -right-1 grid size-5 place-items-center rounded-md bg-white shadow-sm ring-1 ring-line">
+        <MicrosoftLogo className="size-3" />
+      </span>
+    </span>
+  ),
+};
+
+const PROVIDERS: { value: EmailProvider; label: string; hint: string }[] = [
+  { value: 'none', label: 'Off', hint: 'Trigon sends no email.' },
+  { value: 'smtp', label: 'SMTP server', hint: 'Any mail server or relay: your own, Microsoft 365 SMTP, Gmail, SendGrid…' },
+  { value: 'microsoft', label: 'Microsoft 365', hint: 'Exchange Online through the Trigon app registration. No SMTP needed.' },
 ];
 
 /** Common servers: fill host, port and encryption in one click. */
@@ -110,9 +147,8 @@ export default function EmailSettingsPage() {
               aria-pressed={form.provider === p.value}
               className={`press rounded-2xl p-3.5 text-left ring-2 ${form.provider === p.value ? 'bg-accent-soft/50 ring-accent' : 'bg-surface-2/60 ring-transparent hover:bg-surface-2'}`}
             >
-              <span className={`flex items-center gap-2 font-semibold ${form.provider === p.value ? 'text-accent' : ''}`}>
-                {p.icon} {p.label}
-              </span>
+              {PROVIDER_ICON[p.value]}
+              <span className={`mt-3 block font-semibold ${form.provider === p.value ? 'text-accent' : ''}`}>{p.label}</span>
               <span className="mt-1 block text-meta text-ink-3">{p.hint}</span>
             </button>
           ))}
