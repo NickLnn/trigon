@@ -16,7 +16,7 @@ your `.env`, and the `data/` folder (database, Redis, uploaded files).
 ```bash
 cd /volume1/docker/trigon
 cp .env.example .env            # set POSTGRES_PASSWORD, JWT_ACCESS_SECRET, APP_URL, WEB_PORT, TRIGON_TAG
-mkdir -p data/postgres data/redis data/storage data/backups && chown 1000:1000 data/storage data/backups
+mkdir -p data/postgres data/redis data/storage data/backups data/tessdata && chown 1000:1000 data/storage data/backups
 ```
 
 Then either:

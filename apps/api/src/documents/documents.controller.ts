@@ -20,6 +20,10 @@ import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { documents, spaces, users } from '../db/schema';
 import { PermissionsService } from '../permissions/permissions.service';
+import { fold, searchWords, snippet } from '../search/fold';
+
+/** Characters of body text fetched around a search match for the excerpt. */
+const SNIPPET_CHARS = 360;
 
 class CreateDocumentDto {
   @IsUUID()
@@ -256,23 +260,28 @@ export class DocumentsController {
 
   /**
    * Search-as-you-type across everything the user can see: every word is matched as a prefix
-   * ("sign ou" finds "Sign out…") over title + body, title hits rank first, and an ILIKE fallback
-   * catches partial words inside titles.
+   * ("sign ou" finds "Sign out…") over title + body (uploaded files' text included, OCR too). Accents
+   * and final sigma are ignored ("αθηνα" finds "ΑΘΉΝΑΣ"), title hits rank first, and a trigram
+   * fallback catches typos in titles ("postgress" finds "PostgreSQL backups").
    */
   @Get('search')
   async search(@CurrentUser() user: AuthUser, @Query('q') q = '') {
-    const term = q.trim().slice(0, 200);
-    const words = (term.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).slice(0, 8);
+    const term = fold(q.trim().slice(0, 200));
+    const words = searchWords(term);
     if (!words.length) return [];
     const levels = await this.perms.spaceLevels(user);
     const spaceIds = user.role === 'admin' ? null : [...levels.keys()];
     if (spaceIds && !spaceIds.length) return [];
 
-    const tsv = sql`to_tsvector('simple', coalesce(${documents.title}, '') || ' ' || coalesce(${documents.textContent}, ''))`;
     const query = sql`to_tsquery('simple', ${words.map((w) => `${w}:*`).join(' & ')})`;
-    const titleHit = sql`(${documents.title} ILIKE ${'%' + term + '%'})`;
-    const rank = sql<number>`(ts_rank(${tsv}, ${query}) + CASE WHEN ${titleHit} THEN 1 ELSE 0 END)`;
-    return this.db
+    const titleHit = sql`(strpos(trigon_fold(${documents.title}), ${term}) > 0)`;
+    const typo = term.length >= 4 ? sql`(word_similarity(${term}, trigon_fold(${documents.title})) >= 0.5)` : sql`false`;
+    // The body expression must match documents_search_idx exactly, or the index is not used.
+    // Body matches come from the GIN index (subquery); only titles are scanned for the substring / typo checks.
+    // Ranking uses the title alone, so no document body is re-read per keystroke; recency breaks ties.
+    const bodyHit = sql`${documents.id} IN (SELECT d.id FROM ${documents} d WHERE to_tsvector('simple', trigon_fold(coalesce(d.title, '') || ' ' || coalesce(d.text_content, ''))) @@ ${query})`;
+    const rank = sql<number>`(ts_rank(to_tsvector('simple', trigon_fold(${documents.title})), ${query}) + CASE WHEN ${titleHit} THEN 1 WHEN ${typo} THEN 0.5 ELSE 0 END)`;
+    const hits = await this.db
       .select({
         id: documents.id,
         title: documents.title,
@@ -284,20 +293,36 @@ export class DocumentsController {
         spaceId: documents.spaceId,
         spaceName: spaces.name,
         updatedAt: documents.updatedAt,
-        snippet: sql<string>`ts_headline('simple', coalesce(${documents.textContent}, ''), ${query}, 'MaxFragments=1,MaxWords=24,MinWords=8,StartSel=<mark>,StopSel=</mark>')`,
       })
       .from(documents)
       .innerJoin(spaces, eq(spaces.id, documents.spaceId))
       .where(
         and(
           isNull(documents.deletedAt),
-          sql`(${tsv} @@ ${query} OR ${titleHit})`,
+          sql`(${bodyHit} OR ${titleHit} OR ${typo})`,
           spaceIds ? inArray(documents.spaceId, spaceIds) : undefined,
         ),
       )
       // Order by the expression itself — a SELECT alias isn't visible here (that was the old bug).
       .orderBy(desc(rank), desc(documents.updatedAt))
       .limit(20);
+    if (!hits.length) return [];
+
+    // Excerpts: a window of the original text around the first matched word (found in the folded text,
+    // which keeps character positions), highlighted in JS so accented words get marked too.
+    const first = sql.join(words.map((w) => sql`nullif(strpos(b, ${w}), 0)`), sql`, `);
+    const windows = await this.db.execute<{ id: string; win: string | null; s: number }>(sql`
+      select id, substr(text_content, s, ${SNIPPET_CHARS + 1}) as win, s from (
+        select id, text_content, greatest(coalesce(least(${first}), 1) - 100, 1) as s
+        from (select id, text_content, trigon_fold(left(text_content, 100000)) as b from documents
+              where id in (${sql.join(hits.map((h) => sql`${h.id}`), sql`, `)})) x
+      ) y`);
+    const byId = new Map(windows.rows.map((r) => [r.id, r]));
+    return hits.map((h) => {
+      const w = byId.get(h.id);
+      const win = w?.win ?? '';
+      return { ...h, snippet: win ? snippet(win, words, w!.s > 1, Array.from(win).length > SNIPPET_CHARS) : '' };
+    });
   }
 
   /** Recently updated documents for the home screen. */

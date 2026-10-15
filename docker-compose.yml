@@ -68,6 +68,8 @@ services:
       - ./data/storage:/data/storage
       # Settings → Backups → "This server" writes here (keep it on a different disk if you can).
       - ./data/backups:/data/backups
+      # Extra OCR languages: drop <code>.traineddata files here (English + Greek are built in). See docs/ocr-languages.md.
+      - ./data/tessdata:/data/tessdata:ro
     ports:
       - '${COLLAB_PORT:-4001}:4001'
     depends_on:

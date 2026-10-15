@@ -71,6 +71,13 @@
       "when": 1791836251702,
       "tag": "0009_history_and_trash",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792051476865,
+      "tag": "0010_file_text_index",
+      "breakpoints": true
     }
   ]
 }
