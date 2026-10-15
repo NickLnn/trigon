@@ -19,18 +19,42 @@ function safeSnippet(s: string) {
     .replace(/&lt;\/mark&gt;/g, '</mark>');
 }
 
+/** Same folding as the server: case, accents and final sigma don't matter ("αθηνα" marks "Αθήνα"). */
+const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/ς/g, 'σ');
+
 /** Highlight the typed words inside a title. */
 function highlight(title: string, q: string) {
-  const words = q.toLowerCase().match(/[\p{L}\p{N}]+/gu);
+  const words = fold(q).match(/[\p{L}\p{N}]+/gu);
   if (!words?.length) return title;
-  const re = new RegExp(`(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
-  return title.split(re).map((part, i) =>
-    i % 2 ? (
+  // Fold per character so a match in the folded title maps back to the original characters.
+  const chars = Array.from(title);
+  const starts: number[] = [];
+  let folded = '';
+  for (const ch of chars) {
+    starts.push(folded.length);
+    folded += fold(ch);
+  }
+  const marked = new Array<boolean>(chars.length).fill(false);
+  for (const w of words) {
+    for (let at = folded.indexOf(w); at >= 0; at = folded.indexOf(w, at + 1)) {
+      chars.forEach((_, i) => {
+        if (starts[i] >= at && starts[i] < at + w.length) marked[i] = true;
+      });
+    }
+  }
+  const parts: { text: string; mark: boolean }[] = [];
+  chars.forEach((ch, i) => {
+    const last = parts[parts.length - 1];
+    if (last && last.mark === marked[i]) last.text += ch;
+    else parts.push({ text: ch, mark: marked[i] });
+  });
+  return parts.map((p, i) =>
+    p.mark ? (
       <mark key={i} className="rounded bg-accent-soft px-0.5 text-accent">
-        {part}
+        {p.text}
       </mark>
     ) : (
-      part
+      p.text
     ),
   );
 }

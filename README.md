@@ -41,7 +41,7 @@
     <td><img src="docs/screenshots/backups.png" alt="Backup settings"><br><b>Backups</b> — schedule, several destinations, one-click restore.</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/search.png" alt="Search across everything"><br><b>Search</b> — as you type, across pages and files you can access.</td>
+    <td><img src="docs/screenshots/search.png" alt="Search across everything"><br><b>Search</b> — as you type, across pages and the text inside files (PDF, Office, scans via OCR).</td>
     <td><img src="docs/screenshots/trash.png" alt="Trash with restore"><br><b>Trash</b> — restore deleted pages, folders and files for 30 days.</td>
   </tr>
 </table>
@@ -137,6 +137,11 @@ npm run dev                 # api on :4000 (+ ws :4001), web on :3000
 | Images | Inline preview |
 | Anything else | Stored and downloadable |
 
+**Search inside files.** The text of uploaded PDFs, Word, Excel, PowerPoint, OpenDocument and text files
+is indexed in the background, so search finds what is inside them. Scanned PDFs and images are read with
+OCR (Tesseract, English + Greek built in — [add more languages](docs/ocr-languages.md)). It runs one file
+at a time at low priority and stores only the text, in the database.
+
 > **Why Office files are read-only:** in-browser editing of Word/Excel/PowerPoint needs an office
 > server such as OnlyOffice Docs or Collabora, which wants 2–4 GB of RAM on its own. Trigon stays
 > lightweight on the NAS by previewing these files instead. A self-hosted office server can be added
@@ -169,7 +174,10 @@ Redis lets several API replicas share live documents.
 - `embed` — YouTube / Vimeo / Loom players and Open-Graph link cards (`GET /embeds/unfurl`, SSRF-guarded).
 
 **Search.** Full-text search uses a Postgres GIN index over title + body, with prefix matching as you type
-and title matches ranked first; results only include what the person may open.
+and title matches ranked first; results only include what the person may open. Text is folded by
+`trigon_fold()` (case, accents and Greek final sigma ignored, so `αθηνα` finds `ΑΘΉΝΑΣ`), and a trigram
+fallback catches typos in titles. Uploaded files get their text from `TextIndexService` (`apps/api/src/search`):
+poppler for PDFs, a small built-in zip/XML reader for Office files, Tesseract for scans — no AI, no extra services.
 
 ## Roadmap (next)
 

@@ -24,6 +24,7 @@ import { safeFetch } from '../common/ssrf';
 import { Database, InjectDb } from '../db/db.module';
 import { attachments, documents } from '../db/schema';
 import { PermissionsService } from '../permissions/permissions.service';
+import { TextIndexService } from '../search/text-index.service';
 import { StorageService } from './storage.service';
 
 const MAX_BYTES = Number(process.env.MAX_UPLOAD_MB ?? 50) * 1024 * 1024;
@@ -59,6 +60,7 @@ export class FilesController {
     private readonly perms: PermissionsService,
     private readonly storage: StorageService,
     private readonly activity: ActivityService,
+    private readonly textIndex: TextIndexService,
   ) {}
 
   /** Upload a .docx / .pdf / any file as a node in the space tree. */
@@ -99,6 +101,8 @@ export class FilesController {
       target: { type: 'file', id: doc.id, name: doc.title },
       details: { sizeBytes: file.size, mimeType: file.mimetype },
     });
+    // Read its text (and OCR scans) in the background so it shows up in search.
+    this.textIndex.kick();
     return doc;
   }
 
@@ -132,7 +136,7 @@ export class FilesController {
     const storageKey = await this.storage.put(data);
     await this.db
       .update(documents)
-      .set({ storageKey, sizeBytes: data.length, textContent: dto.content.slice(0, 1_000_000), updatedById: user.id })
+      .set({ storageKey, sizeBytes: data.length, textContent: dto.content.slice(0, 1_000_000), textSource: 'text', textIndexedAt: new Date(), updatedById: user.id })
       .where(eq(documents.id, documentId));
     // Text of the previous version, for the activity log's diff (uploaded files have no extracted text yet).
     const before = doc.textContent ?? ((doc.sizeBytes ?? 0) <= 5_000_000 ? (await this.storage.read(doc.storageKey)).toString('utf8') : '');

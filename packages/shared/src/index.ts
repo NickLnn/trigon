@@ -568,6 +568,34 @@ export interface LdapSettings {
   syncCron: string;
 }
 
+/** Making uploaded files searchable: text from PDFs / Office files, and OCR for scans and images. */
+export interface SearchSettings {
+  /** Read text out of scanned PDFs and images (Tesseract). Text-based PDFs and Office files are always indexed. */
+  ocrEnabled: boolean;
+  /** Tesseract language codes used together, e.g. ["eng", "ell"]. */
+  ocrLanguages: string[];
+  /** Scanned pages OCR'd per file at most (keeps CPU time bounded on big scans). */
+  ocrMaxPages: number;
+}
+
+export interface OcrLanguage {
+  code: string;
+  name: string;
+  /** Shipped with Trigon, or added to the data/tessdata folder. */
+  source: 'built-in' | 'added';
+}
+
+export interface SearchIndexStatus {
+  settings: SearchSettings;
+  /** OCR tools are present in this container (false when running outside the Docker image). */
+  ocrAvailable: boolean;
+  languages: OcrLanguage[];
+  /** Uploaded files by how their text was obtained. */
+  counts: { pending: number; text: number; ocr: number; empty: number; unsupported: number; failed: number };
+  /** Title of the file being read right now, if any. */
+  current: string | null;
+}
+
 export interface AllSettings {
   general: GeneralSettings;
   entra: EntraSettings;

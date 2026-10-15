@@ -20,7 +20,8 @@ export class StorageService implements OnModuleInit {
     await mkdir(this.root, { recursive: true });
   }
 
-  private pathFor(key: string) {
+  /** Where a blob lives on disk (read-only use, e.g. handing a PDF to pdftotext). */
+  pathFor(key: string) {
     if (!/^[0-9a-f-]{36}$/.test(key)) throw new Error('Invalid storage key');
     return join(this.root, key.slice(0, 2), key);
   }

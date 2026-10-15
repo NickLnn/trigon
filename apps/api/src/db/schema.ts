@@ -178,6 +178,10 @@ export const documents = pgTable(
     mimeType: text('mime_type'),
     sizeBytes: integer('size_bytes'),
     storageKey: text('storage_key'),
+    /** For kind = 'file': when text was last read out of the blob (null = waiting for the indexer). */
+    textIndexedAt: timestamp('text_indexed_at', { withTimezone: true }),
+    /** How that text was obtained: text | ocr | empty | unsupported | failed. */
+    textSource: text('text_source'),
     pageType: pageType('page_type').notNull().default('page'),
     /** Review workflow: draft → verified; becomes "stale" once verifiedAt + reviewIntervalDays passes. */
     status: docStatus('status').notNull().default('none'),
@@ -198,10 +202,12 @@ export const documents = pgTable(
   },
   (t) => [
     index('documents_space_parent_idx').on(t.spaceId, t.parentId, t.position),
+    // trigon_fold() (created in migration 0010) drops accents and folds ς→σ, so "Αθηνα" finds "ΑΘΉΝΑ".
     index('documents_search_idx').using(
       'gin',
-      sql`to_tsvector('simple', coalesce(${t.title}, '') || ' ' || coalesce(${t.textContent}, ''))`,
+      sql`to_tsvector('simple', trigon_fold(coalesce(${t.title}, '') || ' ' || coalesce(${t.textContent}, '')))`,
     ),
+    index('documents_text_pending_idx').on(t.createdAt).where(sql`${t.kind} = 'file' and ${t.textIndexedAt} is null`),
   ],
 );
 

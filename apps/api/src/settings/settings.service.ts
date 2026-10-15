@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { BackupSettings, EmailSettings, EntraSettings, GeneralSettings, LdapSettings } from '@trigon/shared';
+import type { BackupSettings, EmailSettings, EntraSettings, GeneralSettings, LdapSettings, SearchSettings } from '@trigon/shared';
 import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -13,6 +13,7 @@ export interface SettingsMap {
   ldap: LdapSettings;
   email: EmailSettings;
   backup: BackupSettings;
+  search: SearchSettings;
 }
 export type SettingsKey = keyof SettingsMap;
 
@@ -23,6 +24,7 @@ const SECRET_FIELDS: { [K in SettingsKey]: (keyof SettingsMap[K])[] } = {
   ldap: ['bindPassword'],
   email: ['smtpPassword'],
   backup: ['smbPassword'],
+  search: [],
 };
 
 /**
@@ -115,6 +117,11 @@ export class SettingsService {
         smbDomain: '',
         smbPassword: '',
         lastRun: null,
+      },
+      search: {
+        ocrEnabled: env('OCR_ENABLED', 'true') !== 'false',
+        ocrLanguages: env('OCR_LANGUAGES', 'eng+ell').split(/[+,\s]+/).filter(Boolean),
+        ocrMaxPages: Number(env('OCR_MAX_PAGES', '50')) || 50,
       },
       ldap: {
         enabled: env('LDAP_ENABLED') === 'true',
