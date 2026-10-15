@@ -110,13 +110,16 @@ export default function SearchSettingsPage() {
                   />
                   <span className="flex-1">
                     {l.name} <span className="text-meta text-ink-3">{l.code}</span>
+                    {form.ocrEnabled && form.ocrLanguages[0] === l.code && form.ocrLanguages.length > 1 && (
+                      <span className="ml-2 text-meta font-semibold text-accent">Main</span>
+                    )}
                   </span>
                   <Badge tone={l.source === 'built-in' ? 'neutral' : 'accent'}>{l.source === 'built-in' ? 'Built in' : 'Added'}</Badge>
                 </label>
               ))}
               {!data.languages.length && <p className="text-sm text-ink-3">No language files found.</p>}
             </div>
-            <p className="mt-1.5 text-meta text-ink-3">Tick only the languages your documents use — each extra one makes OCR slower.</p>
+            <p className="mt-1.5 text-meta text-ink-3">Tick only the languages your documents use — each extra one makes OCR slower. The first one ticked is the main language; untick and tick again to change it.</p>
           </div>
 
           <Field label="Pages per file" hint="Scanned pages read per PDF at most. Keeps very large scans from using the CPU for long.">

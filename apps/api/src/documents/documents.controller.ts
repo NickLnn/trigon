@@ -275,7 +275,18 @@ export class DocumentsController {
 
     const query = sql`to_tsquery('simple', ${words.map((w) => `${w}:*`).join(' & ')})`;
     const titleHit = sql`(strpos(trigon_fold(${documents.title}), ${term}) > 0)`;
-    const typo = term.length >= 4 ? sql`(word_similarity(${term}, trigon_fold(${documents.title})) >= 0.5)` : sql`false`;
+    // Typo tolerance per word: every word must be in the title, or (4+ letters) close to a word in it,
+    // so "postgress backup" finds "PostgreSQL backups" but "backup server" doesn't match "Windows Server".
+    const typo = words.some((w) => w.length >= 4)
+      ? sql`(${sql.join(
+          words.map((w) =>
+            w.length >= 4
+              ? sql`(strpos(trigon_fold(${documents.title}), ${w}) > 0 OR word_similarity(${w}, trigon_fold(${documents.title})) >= 0.5)`
+              : sql`(strpos(trigon_fold(${documents.title}), ${w}) > 0)`,
+          ),
+          sql` AND `,
+        )})`
+      : sql`false`;
     // The body expression must match documents_search_idx exactly, or the index is not used.
     // Body matches come from the GIN index (subquery); only titles are scanned for the substring / typo checks.
     // Ranking uses the title alone, so no document body is re-read per keystroke; recency breaks ties.
