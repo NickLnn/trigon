@@ -120,7 +120,7 @@ export class SettingsService {
       },
       search: {
         ocrEnabled: env('OCR_ENABLED', 'true') !== 'false',
-        ocrLanguages: env('OCR_LANGUAGES', 'eng+ell').split(/[+,\s]+/).filter(Boolean),
+        ocrLanguages: env('OCR_LANGUAGES', 'ell+eng').split(/[+,\s]+/).filter(Boolean),
         ocrMaxPages: Number(env('OCR_MAX_PAGES', '50')) || 50,
       },
       ldap: {

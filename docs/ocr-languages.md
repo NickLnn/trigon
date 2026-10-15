@@ -72,6 +72,10 @@ Trigon only reads this folder, so it needs no special permissions.
 
 ## Tips
 
+- **The first ticked language is the main one.** Tesseract leans on it when a word could be read either
+  way, so list the language most of your scans are in first. The default is Greek, then English. With
+  English first, Greek words in mixed documents were sometimes read as Latin letters
+  (`διακομιστή` → `SiakouloTh`).
 - **Only tick the languages your documents use.** Tesseract tries every ticked language on every page,
   so each one makes OCR slower and can lower accuracy.
 - **Pages per file** (default 50) limits how many scanned pages of one PDF are OCR'd. Text-based PDFs
