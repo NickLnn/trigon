@@ -35,11 +35,14 @@ function PdfPage({
   pageNumber,
   scale,
   register,
+  onRendered,
 }: {
   doc: PDFDocumentProxy;
   pageNumber: number;
   scale: number;
   register: (n: number, el: HTMLDivElement | null, handle: PageHandle | null) => void;
+  /** The page's text layer exists now (search highlights can be painted on it). */
+  onRendered: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(pageNumber <= 2);
@@ -98,12 +101,14 @@ function PdfPage({
       if (cancelled) return;
       textDivsRef.current = textLayer.textDivs;
       host.replaceChildren(canvas, textLayerDiv);
+      onRendered();
     })().catch((err) => !cancelled && console.error(err));
 
     return () => {
       cancelled = true;
       page?.cleanup();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onRendered is stable
   }, [visible, doc, pageNumber, scale]);
 
   useEffect(() => {
@@ -167,6 +172,10 @@ export function PdfViewer({ fileUrl, initialPage, initialQuery }: { fileUrl: str
       task?.destroy();
     };
   }, [fileUrl]);
+
+  // Bumped whenever a page finishes rendering, so highlights reach pages that render after a search.
+  const [rendered, setRendered] = useState(0);
+  const onRendered = useCallback(() => setRendered((n) => n + 1), []);
 
   const register = useCallback((n: number, el: HTMLDivElement | null, handle: PageHandle | null) => {
     if (el && handle) pages.current.set(n, { el, handle });
@@ -265,28 +274,26 @@ export function PdfViewer({ fileUrl, initialPage, initialQuery }: { fileUrl: str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc]);
 
-  // Highlight hits in rendered text layers and scroll to the active one.
+  // Highlight hits in the rendered text layers (again whenever another page renders).
   useEffect(() => {
     const active = hits[hitIndex];
-    const paint = () => {
-      pages.current.forEach(({ handle }, n) => {
-        handle.textDivs().forEach((div, i) => {
-          const isHit = hits.some((h) => h.page === n && h.item === i);
-          div.classList.toggle('pdf-hit', isHit);
-          div.classList.toggle('pdf-hit-active', !!active && active.page === n && active.item === i);
-        });
+    pages.current.forEach(({ handle }, n) => {
+      handle.textDivs().forEach((div, i) => {
+        div.classList.toggle('pdf-hit', hits.some((h) => h.page === n && h.item === i));
+        div.classList.toggle('pdf-hit-active', !!active && active.page === n && active.item === i);
       });
-    };
-    paint();
-    if (active) {
-      const entry = pages.current.get(active.page);
-      entry?.handle.render(scale);
-      const div = entry?.handle.textDivs()[active.item];
-      if (div) div.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      else goTo(active.page);
-    }
-    const t = setTimeout(paint, 500); // pages that just rendered
-    return () => clearTimeout(t);
+    });
+  }, [hits, hitIndex, rendered]);
+
+  // Scroll to the active hit (only when it changes, not on every page render).
+  useEffect(() => {
+    const active = hits[hitIndex];
+    if (!active) return;
+    const entry = pages.current.get(active.page);
+    entry?.handle.render(scale);
+    const div = entry?.handle.textDivs()[active.item];
+    if (div) div.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else goTo(active.page);
   }, [hits, hitIndex, scale, goTo]);
 
   if (error) return <p className="p-6 text-center text-danger">{error}</p>;
@@ -356,7 +363,7 @@ export function PdfViewer({ fileUrl, initialPage, initialQuery }: { fileUrl: str
           <div className="mx-auto mt-6 aspect-[1/1.414] w-full max-w-xl animate-pulse rounded-lg bg-surface-3" />
         ) : (
           Array.from({ length: doc.numPages }, (_, i) => (
-            <PdfPage key={`${i + 1}-${scale}`} doc={doc} pageNumber={i + 1} scale={scale} register={register} />
+            <PdfPage key={`${i + 1}-${scale}`} doc={doc} pageNumber={i + 1} scale={scale} register={register} onRendered={onRendered} />
           ))
         )}
       </div>
