@@ -4,7 +4,7 @@
  * "ΑΘΗΝΑΣ", "Αθήνας" and "αθηνας" all fold to "αθηνασ"; "Café" to "cafe".
  */
 export function fold(s: string): string {
-  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/ς/g, 'σ');
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/ς/g, 'σ');
 }
 
 /** Words of a search box entry, folded, at most 8. */

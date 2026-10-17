@@ -25,6 +25,14 @@ const XlsxViewer = dynamic(() => import('@/components/viewers/xlsx-viewer').then
 const PptxViewer = dynamic(() => import('@/components/viewers/pptx-viewer').then((m) => m.PptxViewer), { ssr: false });
 const CodeFileEditor = dynamic(() => import('@/components/viewers/code-file-editor').then((m) => m.CodeFileEditor), { ssr: false });
 
+/** ?page=&q= from a search result link (read once; the PDF viewer is client-only, so no hydration mismatch). */
+function searchJump(): { page?: number; q?: string } {
+  if (typeof window === 'undefined') return {};
+  const p = new URLSearchParams(window.location.search);
+  const page = Number(p.get('page'));
+  return { page: Number.isInteger(page) && page > 0 ? page : undefined, q: p.get('q')?.slice(0, 200) || undefined };
+}
+
 /** Page icon above the title: click to pick a logo / emoji. */
 function PageIcon({ id, icon, editable }: { id: string; icon: string | null; editable: boolean }) {
   const update = useUpdateDocument(id);
@@ -209,6 +217,9 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
   const [railOpen, toggleRail] = useRail();
   const [saveState, setSaveState] = useState<SaveState>('saving');
   const onStatus = useCallback((s: ConnectionStatus) => setConn(s), []);
+  // A search result can link to a PDF page with the searched words: /d/<id>?page=3&q=firewall
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read the URL for each document
+  const jump = useMemo(searchJump, [docId]);
 
   if (error) return <p className="p-10 text-center text-ink-2">{error.message}</p>;
   if (isPending || !doc || !user) return <div className="mx-auto mt-24 h-8 w-2/3 max-w-xl animate-pulse rounded-lg bg-surface-2" />;
@@ -278,7 +289,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
           <ReviewBanner documentId={doc.id} canEdit={canEdit} />
         </div>
         <div className="min-h-0 flex-1">
-          {flavor === 'pdf' && <PdfViewer fileUrl={contentUrl} />}
+          {flavor === 'pdf' && <PdfViewer fileUrl={contentUrl} initialPage={jump.page} initialQuery={jump.q} />}
           {flavor === 'docx' && <DocxViewer fileUrl={contentUrl} />}
           {flavor === 'xlsx' && <XlsxViewer fileUrl={contentUrl} />}
           {flavor === 'pptx' && <PptxViewer fileUrl={contentUrl} />}

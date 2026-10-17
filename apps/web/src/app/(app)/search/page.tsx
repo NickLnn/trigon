@@ -1,15 +1,16 @@
 'use client';
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Loader2, Search as SearchIcon, X } from 'lucide-react';
+import { SEARCH_SINCE_DAYS } from '@trigon/shared';
+import { FileText, Image as ImageIcon, Loader2, ScanText, Search as SearchIcon, X } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { DocIcon, relativeTime } from '@/components/ui/doc-icon';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { api, ApiError } from '@/lib/api';
-import type { SearchHit } from '@/lib/queries';
+import { useSpaces, type SearchHit } from '@/lib/queries';
 
-/** Escape everything, then re-allow only the <mark> tags produced by ts_headline. */
+/** Escape everything, then re-allow only the <mark> tags the server puts around matched words. */
 function safeSnippet(s: string) {
   return s
     .replace(/&/g, '&amp;')
@@ -20,7 +21,7 @@ function safeSnippet(s: string) {
 }
 
 /** Same folding as the server: case, accents and final sigma don't matter ("αθηνα" marks "Αθήνα"). */
-const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/ς/g, 'σ');
+const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/ς/g, 'σ');
 
 /** Highlight the typed words inside a title. */
 function highlight(title: string, q: string) {
@@ -69,13 +70,56 @@ function useDebounced(value: string, ms: number) {
   return v;
 }
 
+type TypeFilter = '' | 'page' | 'file';
+type SinceFilter = '' | `${(typeof SEARCH_SINCE_DAYS)[number]}`;
+
+const SINCE_LABEL: Record<(typeof SEARCH_SINCE_DAYS)[number], string> = { 7: 'Past week', 30: 'Past month', 365: 'Past year' };
+
+/** Where the words were found, when it isn't obvious from the excerpt. */
+function foundLabel(hit: SearchHit) {
+  const parts: string[] = [];
+  if (hit.foundIn === 'scan') parts.push('Found in scanned text');
+  if (hit.foundIn === 'image') parts.push('Found in an image on this page');
+  if (hit.page) parts.push(`page ${hit.page}`);
+  return parts.join(' · ');
+}
+
+/** Open a PDF at the page of the match with the words highlighted; anything else as usual. */
+function hitHref(hit: SearchHit, term: string) {
+  return hit.page ? `/d/${hit.id}?page=${hit.page}&q=${encodeURIComponent(term)}` : `/d/${hit.id}`;
+}
+
+function FilterSelect<T extends string>({ value, onChange, label, children }: { value: T; onChange: (v: T) => void; label: string; children: ReactNode }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as T)}
+      aria-label={label}
+      className={`press h-8 max-w-44 shrink-0 cursor-pointer truncate rounded-pill border px-3 text-meta font-semibold outline-none ring-accent focus-visible:ring-2 ${
+        value ? 'border-transparent bg-accent-soft text-accent' : 'border-line bg-surface text-ink-2'
+      }`}
+    >
+      {children}
+    </select>
+  );
+}
+
 export default function SearchPage() {
   const [q, setQ] = useState('');
+  const [type, setType] = useState<TypeFilter>('');
+  const [space, setSpace] = useState('');
+  const [since, setSince] = useState<SinceFilter>('');
   const term = useDebounced(q.trim(), 180);
   const inputRef = useRef<HTMLInputElement>(null);
+  const spaces = useSpaces();
+  const params = new URLSearchParams({ q: term });
+  if (type) params.set('type', type);
+  if (space) params.set('space', space);
+  if (since) params.set('since', since);
+  const filtered = !!(type || space || since);
   const results = useQuery({
-    queryKey: ['search', term],
-    queryFn: () => api<SearchHit[]>(`/documents/search?q=${encodeURIComponent(term)}`),
+    queryKey: ['search', term, type, space, since],
+    queryFn: () => api<SearchHit[]>(`/documents/search?${params}`),
     enabled: term.length > 0,
     placeholderData: keepPreviousData,
     retry: (count, err) => err instanceof ApiError && err.status === 429 && count < 3,
@@ -98,7 +142,7 @@ export default function SearchPage() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && results.data?.[0]) location.assign(`/d/${results.data[0].id}`);
+              if (e.key === 'Enter' && results.data?.[0]) location.assign(hitHref(results.data[0], term));
               if (e.key === 'Escape') setQ('');
             }}
             placeholder="Pages, runbooks, files…"
@@ -113,13 +157,48 @@ export default function SearchPage() {
             </button>
           )}
         </label>
+        <div className="-mx-1 mt-2.5 flex items-center gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]">
+          <FilterSelect value={type} onChange={setType} label="Type">
+            <option value="">Pages and files</option>
+            <option value="page">Pages only</option>
+            <option value="file">Files only</option>
+          </FilterSelect>
+          <FilterSelect value={space} onChange={setSpace} label="Space">
+            <option value="">All spaces</option>
+            {spaces.data?.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </FilterSelect>
+          <FilterSelect value={since} onChange={setSince} label="Changed">
+            <option value="">Any time</option>
+            {SEARCH_SINCE_DAYS.map((d) => (
+              <option key={d} value={String(d)}>
+                {SINCE_LABEL[d]}
+              </option>
+            ))}
+          </FilterSelect>
+          {filtered && (
+            <button
+              onClick={() => {
+                setType('');
+                setSpace('');
+                setSince('');
+              }}
+              className="press h-8 shrink-0 rounded-pill px-2.5 text-meta font-semibold text-ink-3 hover:text-ink"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
         <div className="mt-2 min-h-5 px-1 text-meta text-ink-3" aria-live="polite">
           {rateLimited
             ? 'You’re typing faster than search can keep up — results will catch up in a moment.'
             : results.error
               ? <span className="text-danger">Search failed: {results.error.message}</span>
               : !q
-                ? 'Search across every space you have access to. Results appear as you type.'
+                ? 'Search across every space you have access to — including the text inside files, scans and screenshots.'
                 : busy
                   ? 'Searching…'
                   : results.data
@@ -128,27 +207,42 @@ export default function SearchPage() {
         </div>
       </div>
 
-      {term && results.data?.length === 0 && !busy && <p className="mt-8 text-center text-ink-3">No results for “{term}”. Try fewer or shorter words.</p>}
+      {term && results.data?.length === 0 && !busy && (
+        <p className="mt-8 text-center text-ink-3">
+          No results for “{term}”{filtered ? ' with these filters' : ''}. Try {filtered ? 'clearing the filters, or ' : ''}fewer or shorter words.
+        </p>
+      )}
 
       <ul className={`mt-1 space-y-2 transition-opacity ${busy && results.data ? 'opacity-60' : ''}`}>
         {q &&
-          results.data?.map((hit) => (
-            <li key={hit.id}>
-              <Link href={`/d/${hit.id}`} className="press flex gap-3 rounded-card bg-surface p-4 shadow-card hover:ring-2 hover:ring-accent/30">
-                <DocIcon kind={hit.kind} mimeType={hit.mimeType} title={hit.title} emoji={hit.icon} pageType={hit.pageType} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="truncate font-semibold">{highlight(hit.title, term)}</span>
-                    <StatusBadge status={hit.status} compact />
+          results.data?.map((hit) => {
+            const found = foundLabel(hit);
+            return (
+              <li key={hit.id}>
+                <Link href={hitHref(hit, term)} className="press flex gap-3 rounded-card bg-surface p-4 shadow-card hover:ring-2 hover:ring-accent/30">
+                  <DocIcon kind={hit.kind} mimeType={hit.mimeType} title={hit.title} emoji={hit.icon} pageType={hit.pageType} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate font-semibold">{highlight(hit.title, term)}</span>
+                      <StatusBadge status={hit.status} compact />
+                    </span>
+                    {hit.snippet && <span className="mt-0.5 line-clamp-2 block text-sm text-ink-2" dangerouslySetInnerHTML={{ __html: safeSnippet(hit.snippet) }} />}
+                    <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-meta text-ink-3">
+                      <span>
+                        {hit.spaceName} · {relativeTime(hit.updatedAt)}
+                      </span>
+                      {found && (
+                        <span className="inline-flex items-center gap-1 text-accent">
+                          {hit.foundIn === 'image' ? <ImageIcon className="size-3.5" /> : hit.foundIn === 'scan' ? <ScanText className="size-3.5" /> : <FileText className="size-3.5" />}
+                          {found}
+                        </span>
+                      )}
+                    </span>
                   </span>
-                  {hit.snippet && <span className="mt-0.5 line-clamp-2 block text-sm text-ink-2" dangerouslySetInnerHTML={{ __html: safeSnippet(hit.snippet) }} />}
-                  <span className="mt-1 block text-meta text-ink-3">
-                    {hit.spaceName} · {relativeTime(hit.updatedAt)}
-                  </span>
-                </span>
-              </Link>
-            </li>
-          ))}
+                </Link>
+              </li>
+            );
+          })}
       </ul>
     </div>
   );

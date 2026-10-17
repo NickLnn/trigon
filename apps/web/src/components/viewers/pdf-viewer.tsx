@@ -17,6 +17,9 @@ function loadPdfJs() {
   return pdfjsPromise;
 }
 
+/** Case, accents and final sigma don't matter ("αθηνα" finds "Αθήνα"), same as Trigon's search. */
+const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/ς/g, 'σ');
+
 interface Hit {
   page: number;
   item: number;
@@ -123,8 +126,10 @@ function PdfPage({
 
 /**
  * Embedded PDF reader: lazy page rendering, selectable text layer, page jump, zoom and search.
+ * `initialPage` / `initialQuery` come from a search result link (/d/<id>?page=3&q=firewall):
+ * the viewer opens at that page with the words highlighted.
  */
-export function PdfViewer({ fileUrl }: { fileUrl: string }) {
+export function PdfViewer({ fileUrl, initialPage, initialQuery }: { fileUrl: string; initialPage?: number; initialQuery?: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +142,10 @@ export function PdfViewer({ fileUrl }: { fileUrl: string }) {
   const [hitIndex, setHitIndex] = useState(0);
   const pages = useRef(new Map<number, { el: HTMLDivElement; handle: PageHandle }>());
   const textCache = useRef(new Map<number, string[]>());
+  /** Still to do from the search link: scroll to initialPage once the pages exist. */
+  const pendingJump = useRef(initialPage && initialPage > 1 ? initialPage : 0);
+  /** The search bar was opened by a link, not by the user: don't pop up the keyboard. */
+  const openedByLink = useRef(false);
 
   useEffect(() => {
     let destroyed = false;
@@ -208,7 +217,7 @@ export function PdfViewer({ fileUrl }: { fileUrl: string }) {
   // Search all pages (text is cached per page).
   useEffect(() => {
     if (!doc) return;
-    const q = query.trim().toLowerCase();
+    const q = fold(query.trim());
     if (q.length < 2) {
       setHits([]);
       return;
@@ -217,11 +226,14 @@ export function PdfViewer({ fileUrl }: { fileUrl: string }) {
     const t = setTimeout(async () => {
       const found: Hit[] = [];
       for (let n = 1; n <= doc.numPages && !cancelled; n++) {
-        (await pageText(n)).forEach((s, item) => s.toLowerCase().includes(q) && found.push({ page: n, item }));
+        (await pageText(n)).forEach((s, item) => fold(s).includes(q) && found.push({ page: n, item }));
       }
       if (!cancelled) {
         setHits(found);
-        setHitIndex(0);
+        // Coming from a search result: start at the first match on (or after) its page.
+        const from = openedByLink.current && initialPage ? found.findIndex((h) => h.page >= initialPage) : -1;
+        setHitIndex(Math.max(0, from));
+        if (found.length) pendingJump.current = 0;
       }
     }, 250);
     return () => {
@@ -229,6 +241,29 @@ export function PdfViewer({ fileUrl }: { fileUrl: string }) {
       clearTimeout(t);
     };
   }, [query, doc, pageText]);
+
+  // Opened from a search result: show the words, and go to the page (pages register as they mount).
+  useEffect(() => {
+    if (!doc) return;
+    if (initialQuery && fold(initialQuery).length >= 2) {
+      openedByLink.current = true;
+      setSearchOpen(true);
+      setQuery(initialQuery);
+    }
+    let tries = 0;
+    const timer = setInterval(() => {
+      const n = Math.min(doc.numPages, pendingJump.current);
+      const entry = n ? pages.current.get(n) : undefined;
+      if (entry) entry.el.scrollIntoView({ block: 'start' });
+      if (entry || !n || ++tries > 40) {
+        pendingJump.current = 0;
+        clearInterval(timer);
+      }
+    }, 150);
+    return () => clearInterval(timer);
+    // Only when the document first loads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc]);
 
   // Highlight hits in rendered text layers and scroll to the active one.
   useEffect(() => {
@@ -263,9 +298,12 @@ export function PdfViewer({ fileUrl }: { fileUrl: string }) {
           <>
             <Search className="size-4 shrink-0 text-ink-3" />
             <input
-              autoFocus
+              autoFocus={!openedByLink.current}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                openedByLink.current = false;
+                setQuery(e.target.value);
+              }}
               onKeyDown={(e) => e.key === 'Enter' && hits.length && setHitIndex((i) => (i + (e.shiftKey ? -1 + hits.length : 1)) % hits.length)}
               placeholder="Search in document"
               className="min-w-0 flex-1 bg-transparent outline-none"
