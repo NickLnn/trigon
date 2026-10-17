@@ -1,14 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs, type PermissionLevel } from '@trigon/shared';
+import { atLeast, DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs, type PermissionLevel } from '@trigon/shared';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Database, InjectDb } from '../db/db.module';
 import { displayStatus } from '../documents/documents.controller';
-import { documents, groupMembers, groups, spaces, users } from '../db/schema';
+import { commentThreads, comments, documents, groupMembers, groups, reviewRequests, spaces, users } from '../db/schema';
 import { EmailService } from '../email/email.service';
 import type { EmailContent } from '../email/template';
+import { PermissionsService } from '../permissions/permissions.service';
 import { SettingsService } from '../settings/settings.service';
-import { accountEmail, digestEmail, reviewAnsweredEmail, reviewRequestEmail, shareEmail, type AccountChange, type DigestPage } from './messages';
+import { accountEmail, commentEmail, digestEmail, reviewAnsweredEmail, reviewRequestEmail, shareEmail, type AccountChange, type CommentRole, type DigestPage } from './messages';
 
 /** A whole group gets at most this many emails for one share; bigger groups are skipped (and logged). */
 const MAX_SHARE_RECIPIENTS = 300;
@@ -32,6 +33,7 @@ export class NotificationsService {
     @InjectDb() private readonly db: Database,
     private readonly email: EmailService,
     private readonly settings: SettingsService,
+    private readonly perms: PermissionsService,
   ) {}
 
   private run(what: string, job: () => Promise<void>) {
@@ -147,6 +149,51 @@ export class NotificationsService {
     });
   }
 
+  /**
+   * A comment or reply was posted. Tells the people in the discussion, the page's owner and anyone in an
+   * open review of it — never the author, and only people who can still open the page.
+   */
+  commented(input: { threadId: string; documentId: string; authorId: string; body: string; reply: boolean }) {
+    this.run('Comment', async () => {
+      if (!(await this.email.enabled())) return;
+      const item = await this.item(input.documentId);
+      if (!item) return;
+      const [thread] = await this.db.select({ quote: commentThreads.quote, createdById: commentThreads.createdById }).from(commentThreads).where(eq(commentThreads.id, input.threadId));
+      const [doc] = await this.db.select({ owner: sql<string | null>`coalesce(${documents.ownerId}, ${documents.createdById})` }).from(documents).where(eq(documents.id, input.documentId));
+      const authors = await this.db.selectDistinct({ id: comments.authorId }).from(comments).where(eq(comments.threadId, input.threadId));
+      const reviews = await this.db
+        .select({ requester: reviewRequests.requestedById, reviewer: reviewRequests.reviewerId })
+        .from(reviewRequests)
+        .where(and(eq(reviewRequests.documentId, input.documentId), inArray(reviewRequests.status, ['pending', 'changes_requested'])));
+
+      // First reason wins: someone in the thread hears about it as a participant.
+      const roles = new Map<string, CommentRole>();
+      const add = (id: string | null | undefined, role: CommentRole) => id && id !== input.authorId && !roles.has(id) && roles.set(id, role);
+      for (const a of authors) add(a.id, 'participant');
+      add(thread?.createdById, 'participant');
+      add(doc?.owner, 'owner');
+      for (const r of reviews) {
+        add(r.requester, 'review');
+        add(r.reviewer, 'review');
+      }
+      if (!roles.size) return;
+
+      const people = await this.db
+        .select({ id: users.id, email: users.email, role: users.role, prefs: users.notificationPrefs })
+        .from(users)
+        .where(and(inArray(users.id, [...roles.keys()]), eq(users.active, true)));
+      const base = await this.settings.publicUrl();
+      const author = await this.displayName(input.authorId);
+      for (const p of people) {
+        if (!p.email || !prefsOf(p.prefs).comments) continue;
+        const { level } = await this.perms.documentLevel({ id: p.id, email: p.email, role: p.role }, input.documentId);
+        if (!atLeast(level, 'view')) continue;
+        const content = commentEmail({ base, author, item, threadId: input.threadId, quote: thread?.quote ?? null, body: input.body, reply: input.reply, role: roles.get(p.id)! });
+        this.email.notify({ ...content, to: p.email });
+      }
+    });
+  }
+
   private async item(documentId: string) {
     const [d] = await this.db
       .select({ title: documents.title, kind: documents.kind, space: spaces.name })
@@ -196,7 +243,7 @@ export class NotificationsService {
   }
 
   /** Email each recipient who wants this kind of message. */
-  private async sendTo(userIds: string[], kind: 'shares' | 'account' | 'reviews', content: EmailContent, includeInactive = false) {
+  private async sendTo(userIds: string[], kind: 'shares' | 'account' | 'reviews' | 'comments', content: EmailContent, includeInactive = false) {
     const people = await this.db
       .select({ email: users.email, prefs: users.notificationPrefs })
       .from(users)

@@ -325,6 +325,45 @@ export const settings = pgTable('settings', {
  * Page history. A version is the page at the end of one person's editing session (saves within 30
  * minutes by the same person extend it), so restoring goes back to a meaningful point, not a keystroke.
  */
+/**
+ * A discussion on a page: about the whole page, or anchored to a passage. Anchors are Yjs relative
+ * positions (base64), so they follow the text as people edit, without changing the page itself —
+ * which also lets people with only 'comment' access (read-only editor) anchor comments.
+ */
+export const commentThreads = pgTable(
+  'comment_threads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => documents.id, { onDelete: 'cascade' }),
+    anchorFrom: text('anchor_from'),
+    anchorTo: text('anchor_to'),
+    /** The passage when the thread was started (shown if the text is later deleted). */
+    quote: text('quote'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolvedById: uuid('resolved_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    ...timestamps,
+  },
+  (t) => [index('comment_threads_document_idx').on(t.documentId, t.createdAt)],
+);
+
+export const comments = pgTable(
+  'comments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => commentThreads.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id').references(() => users.id, { onDelete: 'set null' }),
+    body: text('body').notNull(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('comments_thread_idx').on(t.threadId, t.createdAt)],
+);
+
 export const documentVersions = pgTable(
   'document_versions',
   {

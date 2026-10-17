@@ -210,6 +210,28 @@ export function reviewAnsweredEmail(i: { base: string; reviewer: string; item: R
   };
 }
 
+/** Why this person hears about the comment (shown as the email's last line). */
+export type CommentRole = 'owner' | 'participant' | 'review';
+
+export function commentEmail(i: { base: string; author: string; item: ReviewItem; threadId: string; quote: string | null; body: string; reply: boolean; role: CommentRole }): EmailContent {
+  const why = { owner: 'it is your page', participant: 'you are part of this discussion', review: 'you are part of a review of this page' }[i.role];
+  const excerpt = i.body.length > 600 ? `${i.body.slice(0, 600)}…` : i.body;
+  return {
+    subject: i.reply ? `${i.author} replied on “${i.item.title}”` : `${i.author} commented on “${i.item.title}”`,
+    preheader: excerpt.slice(0, 140),
+    heading: i.reply ? `New reply on ${i.item.title}` : `New comment on ${i.item.title}`,
+    intro: excerpt,
+    details: [
+      { label: 'Page', value: i.item.title },
+      { label: 'Space', value: i.item.space },
+      ...(i.quote ? [{ label: 'On the text', value: `“${i.quote.length > 200 ? `${i.quote.slice(0, 200)}…` : i.quote}”` }] : []),
+      { label: i.reply ? 'Reply by' : 'Comment by', value: i.author },
+    ],
+    action: { label: 'Open the discussion', url: `${i.base}/d/${i.item.id}?comment=${i.threadId}` },
+    reason: `You received this because ${why} and “Comments” emails are on.`,
+  };
+}
+
 export function testEmail(i: { base: string; method: string; to: string }): EmailContent {
   return {
     subject: 'Trigon test email',

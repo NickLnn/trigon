@@ -85,6 +85,20 @@
       "when": 1792273894247,
       "tag": "0011_page_image_text",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792274937369,
+      "tag": "0012_comments",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792275906928,
+      "tag": "0013_fold_encoding_guard",
+      "breakpoints": true
     }
   ]
 }

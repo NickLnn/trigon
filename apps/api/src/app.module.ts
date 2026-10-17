@@ -7,6 +7,7 @@ import { ActivityModule } from './activity/activity.module';
 import { BackupsModule } from './backups/backups.module';
 import { AuthModule } from './auth/auth.module';
 import { CollabModule } from './collab/collab.module';
+import { CommentsModule } from './comments/comments.module';
 import { JwtAuthGuard, RolesGuard } from './common/guards';
 import { DbModule } from './db/db.module';
 import { DirectoryModule } from './directory/directory.module';
@@ -47,6 +48,7 @@ import { UsersModule } from './users/users.module';
     ReviewsModule,
     BackupsModule,
     SearchModule,
+    CommentsModule,
   ],
   controllers: [HealthController],
   providers: [

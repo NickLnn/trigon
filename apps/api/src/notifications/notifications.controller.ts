@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Put } from '@nestjs/common';
 import type { MyNotifications } from '@trigon/shared';
-import { IsBoolean, IsIn } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 import { eq } from 'drizzle-orm';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
@@ -13,6 +13,8 @@ class PrefsDto {
   @IsBoolean() account: boolean;
   @IsIn(['off', 'daily', 'weekly']) reviewDigest: 'off' | 'daily' | 'weekly';
   @IsBoolean() reviews: boolean;
+  /** Optional so an older (cached) app that doesn't know it yet can still save. */
+  @IsOptional() @IsBoolean() comments?: boolean;
 }
 
 /** Profile → Notifications: each person's own email choices. */
@@ -31,7 +33,8 @@ export class NotificationsController {
 
   @Put()
   async save(@CurrentUser() user: AuthUser, @Body() dto: PrefsDto): Promise<MyNotifications> {
-    await this.db.update(users).set({ notificationPrefs: { ...dto } }).where(eq(users.id, user.id));
+    const [row] = await this.db.select({ prefs: users.notificationPrefs }).from(users).where(eq(users.id, user.id));
+    await this.db.update(users).set({ notificationPrefs: { ...prefsOf(row?.prefs), ...dto } }).where(eq(users.id, user.id));
     return this.get(user);
   }
 }

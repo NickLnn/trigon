@@ -5,10 +5,13 @@ import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import { Placeholder } from '@tiptap/extensions';
 import { EditorContent, useEditor } from '@tiptap/react';
+import type { CommentThread } from '@trigon/shared';
+import { MessageSquarePlus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { api, collabUrl } from '@/lib/api';
 import { AutoCodeDetect } from './extensions/auto-code';
+import { Comments, selectionAnchor, updateComments, type CommentAnchor } from './extensions/comments';
 import { contentExtensions } from './extensions/content';
 import { SlashCommand } from './extensions/slash-command';
 import { WebClipper, type WebClipperStorage } from './extensions/web-clipper';
@@ -45,6 +48,17 @@ interface Props {
   /** Headings, in order — for the "On this page" outline. */
   onOutline?: (items: OutlineItem[]) => void;
   onSaveState?: (state: SaveState) => void;
+  /** Page discussions: highlights in the text, and a Comment button on selected text. */
+  comments?: EditorComments;
+}
+
+export interface EditorComments {
+  threads: CommentThread[];
+  activeId: string | null;
+  draft: CommentAnchor | null;
+  canComment: boolean;
+  onSelect: (threadId: string) => void;
+  onStart: (anchor: CommentAnchor) => void;
 }
 
 async function uploadAttachment(documentId: string, file: File) {
@@ -59,7 +73,7 @@ async function uploadAttachment(documentId: string, file: File) {
  * Block editor bound to a Yjs document synced through Hocuspocus. Every keystroke is a CRDT
  * update, so concurrent edits merge without conflicts; the server persists the doc state.
  */
-export function CollaborativeEditor({ documentId, user, editable, initialHtml, onStatusChange, onPeers, onOutline, onSaveState }: Props) {
+export function CollaborativeEditor({ documentId, user, editable, initialHtml, onStatusChange, onPeers, onOutline, onSaveState, comments }: Props) {
   const ydoc = useMemo(() => new Y.Doc(), [documentId]);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
   const [synced, setSynced] = useState(false);
@@ -140,6 +154,7 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
             (await api<{ url: string }>('/files/attachments/import', { method: 'POST', json: { documentId, url } })).url,
         }),
         Collaboration.configure({ document: ydoc }),
+        Comments,
         ...(provider
           ? [CollaborationCaret.configure({ provider, user: { name: user.displayName, color: colorFor(user.id) } })]
           : []),
@@ -168,6 +183,54 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
     };
   }, [editor, onOutline]);
 
+  // Keep the comment highlights in step with the threads, the selected thread and a draft.
+  const onSelectRef = useRef(comments?.onSelect);
+  onSelectRef.current = comments?.onSelect;
+  useEffect(() => {
+    if (!editor || !synced) return;
+    updateComments(editor, {
+      threads: comments?.threads ?? [],
+      activeId: comments?.activeId ?? null,
+      draft: comments?.draft ?? null,
+      onSelect: (id) => onSelectRef.current?.(id),
+    });
+  }, [editor, synced, comments?.threads, comments?.activeId, comments?.draft]);
+
+  // Selecting a thread elsewhere (the comments list) brings its passage into view.
+  useEffect(() => {
+    const id = comments?.activeId;
+    if (!editor || !id) return;
+    const t = setTimeout(() => {
+      const el = editor.view.dom.querySelector(`[data-thread="${CSS.escape(id)}"]`);
+      const r = el?.getBoundingClientRect();
+      if (el && r && (r.top < 80 || r.bottom > window.innerHeight - 40)) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [editor, comments?.activeId]);
+
+  // A floating "Comment" button above selected text.
+  const [selBox, setSelBox] = useState<{ top: number; left: number } | null>(null);
+  const canComment = !!comments?.canComment;
+  useEffect(() => {
+    if (!editor || !canComment) return;
+    const update = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount || !editor.view.dom.contains(sel.anchorNode) || !editor.view.dom.contains(sel.focusNode)) {
+        setSelBox(null);
+        return;
+      }
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      if (!rect.width && !rect.height) return setSelBox(null);
+      setSelBox({ top: Math.max(8, rect.top - 44), left: Math.min(window.innerWidth - 120, Math.max(8, rect.left + rect.width / 2 - 52)) });
+    };
+    document.addEventListener('selectionchange', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      document.removeEventListener('selectionchange', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [editor, canComment]);
+
   // Materialise an import once the server state has arrived and turned out to be empty.
   useEffect(() => {
     if (!editor || !synced || !initialHtml || !editable || seeded.current) return;
@@ -177,5 +240,26 @@ export function CollaborativeEditor({ documentId, user, editable, initialHtml, o
     editor.commands.setContent(initialHtml);
   }, [editor, synced, initialHtml, editable, ydoc]);
 
-  return <EditorContent editor={editor} />;
+  return (
+    <>
+      <EditorContent editor={editor} />
+      {selBox && editor && canComment && (
+        <button
+          type="button"
+          // Keep the text selected while clicking.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            const anchor = selectionAnchor(editor.view);
+            if (anchor) comments?.onStart(anchor);
+            window.getSelection()?.removeAllRanges();
+            setSelBox(null);
+          }}
+          style={{ top: selBox.top, left: selBox.left }}
+          className="press fixed z-40 inline-flex items-center gap-1.5 rounded-pill bg-ink px-3.5 py-2 text-sm font-semibold text-bg shadow-card"
+        >
+          <MessageSquarePlus className="size-4" /> Comment
+        </button>
+      )}
+    </>
+  );
 }

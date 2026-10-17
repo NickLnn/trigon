@@ -4,6 +4,7 @@ import { IsBoolean, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'c
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { ActivityService } from '../activity/activity.service';
+import { CommentsService } from '../comments/comments.service';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { documents, reviewRequests, spaces, users } from '../db/schema';
@@ -83,6 +84,7 @@ export class ReviewsController {
     private readonly perms: PermissionsService,
     private readonly activity: ActivityService,
     private readonly notifications: NotificationsService,
+    private readonly comments: CommentsService,
   ) {}
 
   private base() {
@@ -267,6 +269,11 @@ export class ReviewsController {
       details: { note },
     });
     this.notifications.reviewAnswered({ requesterId: req.requestedById, reviewerId: user.id, documentId: req.documentId, approved: false, note });
+    // Keep the conversation on the page: the requested changes become a comment people can reply to and
+    // resolve once done. The review email and activity entry above already tell people about it.
+    if (doc.kind === 'page') {
+      await this.comments.createThread(user, req.documentId, { body: `Requested changes: ${note}` }, { notify: false, record: false }).catch(() => undefined);
+    }
     return { ok: true };
   }
 

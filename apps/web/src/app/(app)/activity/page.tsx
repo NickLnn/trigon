@@ -131,6 +131,8 @@ function EventSheet({ e, onClose, onFilter }: { e: ActivityEvent; onClose: () =>
         {typeof d.itemsRestored === 'number' && <DetailRow label="Items restored">{d.itemsRestored}</DetailRow>}
         {typeof d.message === 'string' && <DetailRow label="Message">{d.message}</DetailRow>}
         {typeof d.note === 'string' && <DetailRow label="Note">{d.note}</DetailRow>}
+        {typeof d.excerpt === 'string' && <DetailRow label={d.reply ? 'Reply' : 'Comment'}>{d.excerpt}</DetailRow>}
+        {typeof d.quote === 'string' && <DetailRow label="On the text">“{d.quote}”</DetailRow>}
         {Array.isArray(d.fields) && <DetailRow label="Fields saved">{d.fields.join(', ')}</DetailRow>}
         <DetailRow label="IP address">{e.ip ?? '—'}</DetailRow>
         {e.userAgent && (

@@ -1,4 +1,4 @@
-import { accountEmail, digestEmail, reviewAnsweredEmail, reviewRequestEmail, shareEmail, testEmail } from '../notifications/messages';
+import { accountEmail, commentEmail, digestEmail, reviewAnsweredEmail, reviewRequestEmail, shareEmail, testEmail } from '../notifications/messages';
 import { LOGO_PNG_BASE64 } from './logo';
 import { renderEmailHtml, type EmailContent } from './template';
 
@@ -105,6 +105,20 @@ export const EMAIL_PREVIEWS: Record<string, { label: string; build: (base: strin
         ],
       });
     },
+  },
+  comment: {
+    label: 'New comment',
+    build: (base) =>
+      commentEmail({
+        base,
+        author: 'Maria Papadopoulou',
+        item: { id: '00000000-0000-0000-0000-000000000021', title: 'VPN client setup (Windows)', kind: 'page', space: 'Networking' },
+        threadId: '00000000-0000-0000-0000-000000000022',
+        quote: 'Import the .ovpn profile from the shared drive',
+        body: 'The profile moved to the new file server last week — can we update the path here?',
+        reply: false,
+        role: 'owner',
+      }),
   },
   test: {
     label: 'Test email',

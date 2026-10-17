@@ -145,6 +145,8 @@ export const ACTIVITY_ACTIONS = {
   'item.restored': { category: 'content', label: 'Restored {type} from trash' },
   'item.purged': { category: 'content', label: 'Permanently deleted {type}' },
   'item.deleted': { category: 'content', label: 'Deleted {type}' },
+  'comment.added': { category: 'content', label: 'Commented on {type}' },
+  'comment.resolved': { category: 'content', label: 'Resolved a comment on {type}' },
   'share.added': { category: 'sharing', label: 'Shared {type}' },
   'share.changed': { category: 'sharing', label: 'Changed access to {type}' },
   'share.removed': { category: 'sharing', label: 'Removed access to {type}' },
@@ -373,9 +375,11 @@ export interface NotificationPrefs {
   reviewDigest: 'off' | 'daily' | 'weekly';
   /** Someone asks me to review something, or answers a review I asked for. */
   reviews: boolean;
+  /** New comments and replies on pages I own or discuss, or where I'm part of a review. */
+  comments: boolean;
 }
 
-export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { shares: true, account: true, reviewDigest: 'weekly', reviews: true };
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { shares: true, account: true, reviewDigest: 'weekly', reviews: true, comments: true };
 
 /** A saved version of a page: one per person per editing session (see VersionsService). */
 export interface DocumentVersion {
@@ -566,6 +570,42 @@ export interface LdapSettings {
   groupFilter: string;
   tlsRejectUnauthorized: boolean;
   syncCron: string;
+}
+
+// ─── Comments ───
+
+export const COMMENT_MAX = 5000;
+
+export interface CommentItem {
+  id: string;
+  body: string;
+  author: { id: string; name: string } | null;
+  createdAt: string;
+  editedAt: string | null;
+  /** The viewer may edit it (own comment). */
+  canEdit: boolean;
+  /** The viewer may delete it (own comment, or manages the page). */
+  canDelete: boolean;
+}
+
+export interface CommentThread {
+  id: string;
+  /** Yjs relative positions (base64) of the commented passage; null = about the whole page. */
+  anchorFrom: string | null;
+  anchorTo: string | null;
+  /** The passage as it was when the thread started. */
+  quote: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  createdAt: string;
+  comments: CommentItem[];
+}
+
+/** GET /documents/:id/comments */
+export interface CommentsResponse {
+  threads: CommentThread[];
+  /** The viewer may start threads, reply and resolve ('comment' access or more). */
+  canComment: boolean;
 }
 
 /** One search result (GET /documents/search). */

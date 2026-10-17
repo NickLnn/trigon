@@ -407,6 +407,24 @@
   cursor: text;
   transform-origin: 0% 0%;
 }
+/* Commented passages (decorations from the comments extension). */
+.trigon-prose .trigon-comment {
+  background: rgb(255 196 0 / 0.22);
+  border-bottom: 2px solid rgb(230 160 0 / 0.75);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.trigon-prose .trigon-comment:hover,
+.trigon-prose .trigon-comment.is-active {
+  background: rgb(255 176 0 / 0.42);
+}
+.trigon-prose .trigon-comment.is-draft {
+  background: rgb(6 102 235 / 0.16);
+  border-bottom-color: var(--accent);
+  cursor: default;
+}
+
 .pdf-page .textLayer span.pdf-hit {
   background: rgb(255 210 0 / 0.45);
   border-radius: 2px;

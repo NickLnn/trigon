@@ -6,7 +6,9 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ConnectionStatus, OutlineItem, Peer, SaveState } from '@/components/editor/collaborative-editor';
+import type { ConnectionStatus, EditorComments, OutlineItem, Peer, SaveState } from '@/components/editor/collaborative-editor';
+import type { CommentAnchor } from '@/components/editor/extensions/comments';
+import { CommentsButton, CommentsPanel } from '@/components/shell/comments-panel';
 import { DocDetails, VerifyButton } from '@/components/shell/doc-details';
 import { AskReviewSheet, ReviewBanner } from '@/components/shell/review-requests';
 import { ShareSheet } from '@/components/shell/share-sheet';
@@ -15,7 +17,9 @@ import { CustomIcon, fileFlavor, relativeTime } from '@/components/ui/doc-icon';
 import { IconPicker } from '@/components/ui/icon-picker';
 import { StatusBadge, TagChip } from '@/components/ui/status-badge';
 import { findPath, useDocument, useSpace, useTree, useUpdateDocument, type DocumentDetail } from '@/lib/queries';
+import { useComments } from '@/lib/comments';
 import { useSession } from '@/lib/session';
+import { useMediaQuery } from '@/lib/use-media';
 
 // Heavy, browser-only modules load on demand.
 const CollaborativeEditor = dynamic(() => import('@/components/editor/collaborative-editor').then((m) => m.CollaborativeEditor), { ssr: false });
@@ -24,6 +28,13 @@ const DocxViewer = dynamic(() => import('@/components/viewers/docx-viewer').then
 const XlsxViewer = dynamic(() => import('@/components/viewers/xlsx-viewer').then((m) => m.XlsxViewer), { ssr: false });
 const PptxViewer = dynamic(() => import('@/components/viewers/pptx-viewer').then((m) => m.PptxViewer), { ssr: false });
 const CodeFileEditor = dynamic(() => import('@/components/viewers/code-file-editor').then((m) => m.CodeFileEditor), { ssr: false });
+
+/** ?comment=<thread> from a comment email: open that discussion. */
+function linkedThread(): string | null {
+  if (typeof window === 'undefined') return null;
+  const id = new URLSearchParams(window.location.search).get('comment');
+  return id && /^[0-9a-f-]{36}$/i.test(id) ? id : null;
+}
 
 /** ?page=&q= from a search result link (read once; the PDF viewer is client-only, so no hydration mismatch). */
 function searchJump(): { page?: number; q?: string } {
@@ -220,6 +231,50 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
   // A search result can link to a PDF page with the searched words: /d/<id>?page=3&q=firewall
   // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read the URL for each document
   const jump = useMemo(searchJump, [docId]);
+  // Comments: shown in the side rail on wide screens, in a sheet otherwise.
+  const isWide = useMediaQuery('(min-width: 1280px)');
+  const [activeThread, setActiveThread] = useState<string | null>(null);
+  const [draft, setDraft] = useState<CommentAnchor | null>(null);
+  const [commentsSheet, setCommentsSheet] = useState(false);
+  const commentsRef = useRef<HTMLElement>(null);
+  const isPage = doc?.kind === 'page';
+  const comments = useComments(docId, isPage);
+  useEffect(() => {
+    setActiveThread(linkedThread());
+    setDraft(null);
+    setCommentsSheet(false);
+  }, [docId]);
+  const commentsInRail = !!isWide && railOpen;
+  const showComments = useCallback(() => {
+    if (commentsInRail) commentsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    else setCommentsSheet(true);
+  }, [commentsInRail]);
+  // Opened from an email link: show the discussion once the layout is known.
+  useEffect(() => {
+    if (activeThread && isWide !== undefined && comments.data?.threads.some((t) => t.id === activeThread)) showComments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWide, comments.data === undefined]);
+  const editorComments = useMemo<EditorComments | undefined>(
+    () =>
+      comments.data
+        ? {
+            threads: comments.data.threads,
+            activeId: activeThread,
+            draft,
+            canComment: comments.data.canComment,
+            onSelect: (id) => {
+              setActiveThread(id);
+              showComments();
+            },
+            onStart: (anchor) => {
+              setDraft(anchor);
+              setActiveThread(null);
+              showComments();
+            },
+          }
+        : undefined,
+    [comments.data, activeThread, draft, showComments],
+  );
 
   if (error) return <p className="p-10 text-center text-ink-2">{error.message}</p>;
   if (isPending || !doc || !user) return <div className="mx-auto mt-24 h-8 w-2/3 max-w-xl animate-pulse rounded-lg bg-surface-2" />;
@@ -230,6 +285,11 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
     <>
       {sheet === 'share' && <ShareSheet open onOpenChange={(v) => !v && setSheet(null)} type="document" id={doc.id} name={doc.title} />}
       <AskReviewSheet open={sheet === 'review'} onOpenChange={(v) => !v && setSheet(null)} documentId={doc.id} title={doc.title} />
+      {doc.kind === 'page' && (
+        <BottomSheet open={commentsSheet} onOpenChange={(v) => !v && (setCommentsSheet(false), setDraft(null))} title="Comments">
+          <CommentsPanel documentId={doc.id} activeId={activeThread} onSelect={setActiveThread} draft={draft} onDraftDone={() => setDraft(null)} />
+        </BottomSheet>
+      )}
       <BottomSheet open={sheet === 'details'} onOpenChange={(v) => !v && setSheet(null)} title="Details">
         <DocDetails doc={doc} />
       </BottomSheet>
@@ -238,6 +298,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
   const toolbar = (
     <div className="flex items-center gap-1.5">
       <VerifyButton doc={doc} compact />
+      {doc.kind === 'page' && <CommentsButton documentId={doc.id} onClick={showComments} active={commentsSheet} />}
       <button onClick={() => setSheet('share')} className="press inline-flex items-center gap-1.5 rounded-pill border border-line bg-surface px-3.5 py-2 text-sm font-semibold">
         <Share2 className="size-4" /> <span className="hidden sm:inline">Share</span>
       </button>
@@ -376,6 +437,7 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
               onPeers={setPeers}
               onOutline={setOutline}
               onSaveState={setSaveState}
+              comments={editorComments}
             />
           </div>
         </div>
@@ -386,6 +448,12 @@ export default function DocumentPage({ params }: { params: Promise<{ docId: stri
         <div className="sticky top-0 max-h-dvh space-y-6 overflow-y-auto p-5">
           <Presence status={conn} peers={peers} />
           <Outline items={outline} />
+          {commentsInRail && (
+            <section ref={commentsRef} className="scroll-mt-5">
+              <h3 className="mb-2 text-meta font-semibold uppercase tracking-wider text-ink-3">Comments</h3>
+              <CommentsPanel documentId={doc.id} activeId={activeThread} onSelect={setActiveThread} draft={draft} onDraftDone={() => setDraft(null)} />
+            </section>
+          )}
           <section>
             <h3 className="mb-1 text-meta font-semibold uppercase tracking-wider text-ink-3">Details</h3>
             <DocDetails doc={doc} />
