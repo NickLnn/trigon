@@ -103,6 +103,10 @@ describe('extract', () => {
     assert.equal(tidy(officeText(odt, 'odf')), 'Title\nHello world !');
   });
 
+  it('keeps PDF page breaks, including blank leading pages', () => {
+    assert.equal(tidy('\f\n first  page \n\f\fthird\n\n\n\nend \n'), '\ffirst page\f\fthird\n\nend');
+  });
+
   it('rejects non-zip data', () => {
     assert.throws(() => readZip(Buffer.from('not a zip at all, definitely not')), /Not a zip/);
   });

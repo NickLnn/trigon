@@ -11,19 +11,27 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { DOC_STATUSES, PAGE_TYPES, type DisplayStatus, type HealthStats } from '@trigon/shared';
+import { DOC_STATUSES, PAGE_TYPES, SEARCH_SINCE_DAYS, type DisplayStatus, type HealthStats, type SearchHit } from '@trigon/shared';
+import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
-import { and, asc, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, max, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
-import { documents, spaces, users } from '../db/schema';
+import { attachments, documents, spaces, users } from '../db/schema';
 import { PermissionsService } from '../permissions/permissions.service';
 import { fold, searchWords, snippet } from '../search/fold';
 
 /** Characters of body text fetched around a search match for the excerpt. */
 const SNIPPET_CHARS = 360;
+
+class SearchQueryDto {
+  @IsOptional() @IsString() @MaxLength(500) q?: string;
+  @IsOptional() @IsUUID() space?: string;
+  @IsOptional() @IsIn(['page', 'file']) type?: 'page' | 'file';
+  @IsOptional() @Type(() => Number) @IsIn(SEARCH_SINCE_DAYS) since?: number;
+}
 
 class CreateDocumentDto {
   @IsUUID()
@@ -260,18 +268,20 @@ export class DocumentsController {
 
   /**
    * Search-as-you-type across everything the user can see: every word is matched as a prefix
-   * ("sign ou" finds "Sign out…") over title + body (uploaded files' text included, OCR too). Accents
-   * and final sigma are ignored ("αθηνα" finds "ΑΘΉΝΑΣ"), title hits rank first, and a trigram
-   * fallback catches typos in titles ("postgress" finds "PostgreSQL backups").
+   * ("sign ou" finds "Sign out…") over title + body (uploaded files' text included, OCR too) and the
+   * OCR'd text of images pasted into pages. Accents and final sigma are ignored ("αθηνα" finds
+   * "ΑΘΉΝΑΣ"), title hits rank first, and a per-word trigram fallback catches typos in titles
+   * ("postgress" finds "PostgreSQL backups"). Optional filters: space, type (page | file), since (days).
    */
   @Get('search')
-  async search(@CurrentUser() user: AuthUser, @Query('q') q = '') {
-    const term = fold(q.trim().slice(0, 200));
+  async search(@CurrentUser() user: AuthUser, @Query() dto: SearchQueryDto): Promise<SearchHit[]> {
+    const term = fold((dto.q ?? '').trim().slice(0, 200));
     const words = searchWords(term);
     if (!words.length) return [];
     const levels = await this.perms.spaceLevels(user);
     const spaceIds = user.role === 'admin' ? null : [...levels.keys()];
     if (spaceIds && !spaceIds.length) return [];
+    if (dto.space && spaceIds && !spaceIds.includes(dto.space)) return [];
 
     const query = sql`to_tsquery('simple', ${words.map((w) => `${w}:*`).join(' & ')})`;
     const titleHit = sql`(strpos(trigon_fold(${documents.title}), ${term}) > 0)`;
@@ -291,6 +301,9 @@ export class DocumentsController {
     // Body matches come from the GIN index (subquery); only titles are scanned for the substring / typo checks.
     // Ranking uses the title alone, so no document body is re-read per keystroke; recency breaks ties.
     const bodyHit = sql`${documents.id} IN (SELECT d.id FROM ${documents} d WHERE to_tsvector('simple', trigon_fold(coalesce(d.title, '') || ' ' || coalesce(d.text_content, ''))) @@ ${query})`;
+    // Images pasted into pages (attachments_search_idx), counted only while the page still shows them:
+    // removed images stay stored for page history, but shouldn't make the page match.
+    const imageHit = sql`${documents.id} IN (${this.imageMatches(query)})`;
     const rank = sql<number>`(ts_rank(to_tsvector('simple', trigon_fold(${documents.title})), ${query}) + CASE WHEN ${titleHit} THEN 1 WHEN ${typo} THEN 0.5 ELSE 0 END)`;
     const hits = await this.db
       .select({
@@ -304,14 +317,18 @@ export class DocumentsController {
         spaceId: documents.spaceId,
         spaceName: spaces.name,
         updatedAt: documents.updatedAt,
+        textSource: documents.textSource,
       })
       .from(documents)
       .innerJoin(spaces, eq(spaces.id, documents.spaceId))
       .where(
         and(
           isNull(documents.deletedAt),
-          sql`(${bodyHit} OR ${titleHit} OR ${typo})`,
+          sql`(${bodyHit} OR ${titleHit} OR ${typo} OR ${imageHit})`,
           spaceIds ? inArray(documents.spaceId, spaceIds) : undefined,
+          dto.space ? eq(documents.spaceId, dto.space) : undefined,
+          dto.type ? eq(documents.kind, dto.type) : undefined,
+          dto.since ? sql`${documents.updatedAt} >= now() - make_interval(days => ${dto.since})` : undefined,
         ),
       )
       // Order by the expression itself — a SELECT alias isn't visible here (that was the old bug).
@@ -320,20 +337,72 @@ export class DocumentsController {
     if (!hits.length) return [];
 
     // Excerpts: a window of the original text around the first matched word (found in the folded text,
-    // which keeps character positions), highlighted in JS so accented words get marked too.
+    // which keeps character positions), highlighted in JS so accented words get marked too. For PDFs the
+    // form feeds before the match give its page number.
+    const ids = sql.join(hits.map((h) => sql`${h.id}`), sql`, `);
     const first = sql.join(words.map((w) => sql`nullif(strpos(b, ${w}), 0)`), sql`, `);
-    const windows = await this.db.execute<{ id: string; win: string | null; s: number }>(sql`
-      select id, substr(text_content, s, ${SNIPPET_CHARS + 1}) as win, s from (
-        select id, text_content, greatest(coalesce(least(${first}), 1) - 100, 1) as s
-        from (select id, text_content, trigon_fold(left(text_content, 100000)) as b from documents
-              where id in (${sql.join(hits.map((h) => sql`${h.id}`), sql`, `)})) x
-      ) y`);
+    const windows = await this.db.execute<{ id: string; win: string | null; s: number; pos: number | null; page: number | null }>(sql`
+      select id, substr(text_content, s, ${SNIPPET_CHARS + 1}) as win, s, pos,
+             case when pos is null then null
+                  else char_length(left(text_content, pos)) - char_length(replace(left(text_content, pos), chr(12), '')) + 1 end as page
+      from (
+        select id, text_content, pos, greatest(coalesce(pos, 1) - 100, 1) as s
+        from (select id, text_content, least(${first}) as pos
+              from (select id, text_content, trigon_fold(left(text_content, 100000)) as b from ${documents} where id in (${ids})) x) y
+      ) z`);
     const byId = new Map(windows.rows.map((r) => [r.id, r]));
-    return hits.map((h) => {
-      const w = byId.get(h.id);
-      const win = w?.win ?? '';
-      return { ...h, snippet: win ? snippet(win, words, w!.s > 1, Array.from(win).length > SNIPPET_CHARS) : '' };
+
+    // Pages whose words weren't in the body but in one of their images: excerpt from the image text.
+    const imageOnly = hits.filter((h) => h.kind === 'page' && byId.get(h.id)?.pos == null).map((h) => h.id);
+    const imageWindows = new Map<string, { win: string; s: number }>();
+    if (imageOnly.length) {
+      const rows = await this.db.execute<{ id: string; win: string; s: number }>(sql`
+        select distinct on (document_id) document_id as id, substr(text_content, s, ${SNIPPET_CHARS + 1}) as win, s
+        from (
+          select a.document_id, a.text_content, a.created_at,
+                 greatest(coalesce(least(${first}), 1) - 100, 1) as s
+          from (select a.*, trigon_fold(left(a.text_content, 100000)) as b from ${attachments} a
+                where a.id in (${this.imageMatches(query, sql`and ia.document_id in (${sql.join(imageOnly.map((id) => sql`${id}`), sql`, `)})`, true)})) a
+        ) w
+        order by document_id, created_at`);
+      for (const r of rows.rows) imageWindows.set(r.id, r);
+    }
+
+    return hits.map(({ textSource, ...h }) => {
+      const body = byId.get(h.id);
+      const image = imageWindows.get(h.id);
+      const isPdf = h.mimeType === 'application/pdf' || /\.pdf$/i.test(h.title);
+      let foundIn: SearchHit['foundIn'] = null;
+      let excerpt = '';
+      if (body?.pos != null && body.win) {
+        foundIn = textSource === 'ocr' ? 'scan' : 'text';
+        excerpt = snippet(body.win, words, body.s > 1, Array.from(body.win).length > SNIPPET_CHARS);
+      } else if (image) {
+        foundIn = 'image';
+        excerpt = snippet(image.win, words, image.s > 1, Array.from(image.win).length > SNIPPET_CHARS);
+      } else if (body?.win) {
+        // Matched on the title only: show the start of the text.
+        excerpt = snippet(body.win, words, false, Array.from(body.win).length > SNIPPET_CHARS);
+      }
+      return {
+        ...h,
+        updatedAt: h.updatedAt.toISOString(),
+        snippet: excerpt,
+        foundIn,
+        page: isPdf && body?.pos != null ? Number(body.page) : null,
+      };
     });
+  }
+
+  /**
+   * Page images whose OCR text matches `query` and that the page still shows (its content, or a
+   * not-yet-opened import, links /api/files/attachments/<id>). Selects document_id, or the
+   * attachment id with `attachmentIds`.
+   */
+  private imageMatches(query: SQL, extra: SQL = sql``, attachmentIds = false) {
+    return sql`SELECT ${attachmentIds ? sql`ia.id` : sql`ia.document_id`} FROM ${attachments} ia JOIN ${documents} idoc ON idoc.id = ia.document_id
+      WHERE to_tsvector('simple', trigon_fold(coalesce(ia.text_content, ''))) @@ ${query}
+        AND strpos(coalesce(idoc.content::text, idoc.import_html, ''), ia.id::text) > 0 ${extra}`;
   }
 
   /** Recently updated documents for the home screen. */

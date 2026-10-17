@@ -5,7 +5,7 @@ import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
-import { documents } from '../db/schema';
+import { attachments, documents } from '../db/schema';
 import { SettingsService } from '../settings/settings.service';
 import { TextIndexService } from './text-index.service';
 import { languages, toolsAvailable } from './tools';
@@ -33,14 +33,19 @@ export class SearchSettingsController {
 
   @Get()
   async status(): Promise<SearchIndexStatus> {
-    const rows = await this.db
+    const files = await this.db
       .select({ source: sql<string | null>`case when ${documents.textIndexedAt} is null then 'pending' else ${documents.textSource} end`, n: count() })
       .from(documents)
       .where(and(eq(documents.kind, 'file'), isNull(documents.deletedAt)))
       .groupBy(sql`1`);
+    const images = await this.db
+      .select({ source: sql<string | null>`case when ${attachments.textIndexedAt} is null then 'pending' else ${attachments.textSource} end`, n: count() })
+      .from(attachments)
+      .groupBy(sql`1`);
     const counts = { pending: 0, text: 0, ocr: 0, empty: 0, unsupported: 0, failed: 0 };
-    for (const r of rows) if (r.source && r.source in counts) counts[r.source as keyof typeof counts] = r.n;
+    for (const r of [...files, ...images]) if (r.source && r.source in counts) counts[r.source as keyof typeof counts] += r.n;
     return {
+      pageImages: images.reduce((n, r) => n + r.n, 0),
       settings: await this.settings.get('search'),
       ocrAvailable: (await toolsAvailable()).ocr,
       languages: await languages(),

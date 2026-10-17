@@ -37,14 +37,16 @@ export function fileKind(title: string, mimeType: string | null, isText: boolean
   return null;
 }
 
-/** Collapse whitespace runs (keeping line breaks) and cap the length. */
+/** Collapse whitespace runs (keeping line breaks and the form feeds between PDF pages) and cap the length. */
 export function tidy(text: string): string {
   return text
     .replace(/\r\n?/g, '\n')
-    .replace(/[^\S\n]+/g, ' ')
+    .replace(/[^\S\n\f]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')
+    .replace(/\n*\f\n*/g, '\f')
     .replace(/\n{3,}/g, '\n\n')
-    .trim()
+    // Not .trim(): leading form feeds (blank first pages) must stay, or page numbers shift.
+    .replace(/^[ \n]+|[ \n]+$/g, '')
     .slice(0, MAX_TEXT);
 }
 

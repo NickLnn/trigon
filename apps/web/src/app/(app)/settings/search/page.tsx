@@ -53,8 +53,8 @@ export default function SearchSettingsPage() {
   return (
     <div className="space-y-5">
       <SettingsCard
-        title="Uploaded files in search"
-        description="Trigon reads the text of uploaded PDFs, Word, Excel, PowerPoint, OpenDocument and text files so search finds what is inside them. Scanned pages and images are read with OCR."
+        title="Files and images in search"
+        description="Trigon reads the text of uploaded PDFs, Word, Excel, PowerPoint, Visio, OpenDocument and text files so search finds what is inside them. Scanned pages, images and screenshots pasted into pages are read with OCR."
       >
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat value={c.text + c.ocr} label="Searchable" />
@@ -62,6 +62,11 @@ export default function SearchSettingsPage() {
           <Stat value={c.pending} label="Waiting" />
           <Stat value={c.empty + c.unsupported + c.failed} label="No text found" />
         </div>
+        {data.pageImages > 0 && (
+          <p className="mt-2 text-meta text-ink-3">
+            Includes {data.pageImages.toLocaleString()} image{data.pageImages === 1 ? '' : 's'} pasted into pages.
+          </p>
+        )}
         {data.current && (
           <p className="mt-3 flex items-center gap-2 text-sm text-ink-2">
             <Loader2 className="size-4 shrink-0 animate-spin" />

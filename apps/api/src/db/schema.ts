@@ -224,10 +224,20 @@ export const attachments = pgTable(
     mimeType: text('mime_type').notNull(),
     sizeBytes: integer('size_bytes').notNull(),
     sourceUrl: text('source_url'),
+    /** Text read from the image by OCR, so a page is found by the words in its screenshots. */
+    textContent: text('text_content'),
+    /** When the image was last read (null = waiting for the indexer). */
+    textIndexedAt: timestamp('text_indexed_at', { withTimezone: true }),
+    /** ocr | empty | unsupported | failed */
+    textSource: text('text_source'),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('attachments_document_idx').on(t.documentId)],
+  (t) => [
+    index('attachments_document_idx').on(t.documentId),
+    index('attachments_search_idx').using('gin', sql`to_tsvector('simple', trigon_fold(coalesce(${t.textContent}, '')))`),
+    index('attachments_text_pending_idx').on(t.createdAt).where(sql`${t.textIndexedAt} is null`),
+  ],
 );
 
 /**

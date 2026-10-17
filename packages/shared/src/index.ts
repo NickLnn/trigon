@@ -568,6 +568,29 @@ export interface LdapSettings {
   syncCron: string;
 }
 
+/** One search result (GET /documents/search). */
+export interface SearchHit {
+  id: string;
+  title: string;
+  kind: DocumentKind;
+  icon: string | null;
+  mimeType: string | null;
+  pageType: PageType;
+  status: DisplayStatus;
+  spaceId: string;
+  spaceName: string;
+  /** Excerpt with matched words wrapped in <mark> (plain text otherwise; escape before rendering). */
+  snippet: string;
+  updatedAt: string;
+  /** Where the words were found: page/file text, OCR of a scan or image file, or an image pasted into the page. Null = title only. */
+  foundIn: 'text' | 'scan' | 'image' | null;
+  /** For PDFs: the page of the first match. */
+  page: number | null;
+}
+
+/** Search filters: `type` limits to pages or files, `since` to things changed in the last N days. */
+export const SEARCH_SINCE_DAYS = [7, 30, 365] as const;
+
 /** Making uploaded files searchable: text from PDFs / Office files, and OCR for scans and images. */
 export interface SearchSettings {
   /** Read text out of scanned PDFs and images (Tesseract). Text-based PDFs and Office files are always indexed. */
@@ -590,8 +613,10 @@ export interface SearchIndexStatus {
   /** OCR tools are present in this container (false when running outside the Docker image). */
   ocrAvailable: boolean;
   languages: OcrLanguage[];
-  /** Uploaded files by how their text was obtained. */
+  /** Uploaded files and images pasted into pages, by how their text was obtained. */
   counts: { pending: number; text: number; ocr: number; empty: number; unsupported: number; failed: number };
+  /** How many of those are images pasted into pages. */
+  pageImages: number;
   /** Title of the file being read right now, if any. */
   current: string | null;
 }

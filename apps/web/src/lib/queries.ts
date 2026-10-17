@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { treeComparator, type DisplayStatus, type DocumentKind, type DocumentNode, type EffectiveGrant, type HealthStats, type PageType, type PermissionLevel, type SpaceSort, type SpaceStats, type SpaceSummary } from '@trigon/shared';
+import { treeComparator, type DisplayStatus, type DocumentKind, type DocumentNode, type EffectiveGrant, type HealthStats, type PageType, type PermissionLevel, type SearchHit, type SpaceSort, type SpaceStats, type SpaceSummary } from '@trigon/shared';
 import { api } from './api';
 
 export interface RecentDoc {
@@ -20,19 +20,7 @@ export interface RecentDoc {
   updatedByName: string | null;
 }
 
-export interface SearchHit {
-  id: string;
-  title: string;
-  kind: DocumentKind;
-  icon: string | null;
-  mimeType: string | null;
-  pageType: PageType;
-  status: DisplayStatus;
-  spaceId: string;
-  spaceName: string;
-  snippet: string;
-  updatedAt: string;
-}
+export type { SearchHit };
 
 export interface DocumentDetail {
   id: string;

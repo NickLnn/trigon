@@ -2,7 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@ne
 import { isTextFile } from '@trigon/shared';
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { Database, InjectDb } from '../db/db.module';
-import { documents } from '../db/schema';
+import { attachments, documents } from '../db/schema';
 import { StorageService } from '../files/storage.service';
 import { SettingsService } from '../settings/settings.service';
 import { fileKind, officeText, tidy } from './extract';
@@ -15,10 +15,24 @@ const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
 type Source = 'text' | 'ocr' | 'empty' | 'unsupported' | 'failed';
 
+/** Something to read: an uploaded file, or an image pasted into a page. */
+interface Job {
+  table: 'document' | 'attachment';
+  id: string;
+  title: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  storageKey: string;
+}
+
+/** PDF pages are joined with a form feed, so a search hit can tell which page it is on. */
+export const PAGE_BREAK = '\f';
+
 /**
  * Makes uploaded files searchable by reading their text into documents.text_content, one file at a
  * time in the background: text files and Office documents directly, PDFs through their text layer,
- * and scanned pages / images through OCR. Files waiting have text_indexed_at = null.
+ * and scanned pages / images through OCR. Images pasted into pages are OCR'd into
+ * attachments.text_content the same way. Anything waiting has text_indexed_at = null.
  */
 @Injectable()
 export class TextIndexService implements OnApplicationBootstrap, OnModuleDestroy {
@@ -55,7 +69,7 @@ export class TextIndexService implements OnApplicationBootstrap, OnModuleDestroy
     void this.loop();
   }
 
-  /** Read files again: all of them, or only PDFs and images (after OCR settings or languages change). */
+  /** Read files again: all of them, or only PDFs and images (after OCR settings or languages change). Page images are included in both. */
   async reindex(scope: 'all' | 'scans') {
     const scans = sql`(${documents.mimeType} = 'application/pdf' or ${documents.mimeType} like 'image/%' or lower(${documents.title}) ~ '\\.(pdf|png|jpe?g|tiff?|webp|bmp)$')`;
     const rows = await this.db
@@ -63,8 +77,28 @@ export class TextIndexService implements OnApplicationBootstrap, OnModuleDestroy
       .set({ textIndexedAt: null, updatedAt: sql`${documents.updatedAt}` })
       .where(and(eq(documents.kind, 'file'), isNull(documents.deletedAt), scope === 'scans' ? scans : undefined))
       .returning({ id: documents.id });
+    const images = await this.db.update(attachments).set({ textIndexedAt: null }).returning({ id: attachments.id });
     this.kick();
-    return rows.length;
+    return rows.length + images.length;
+  }
+
+  /** The oldest waiting upload, then the oldest waiting page image. */
+  private async next(): Promise<Job | null> {
+    const [doc] = await this.db
+      .select({ id: documents.id, title: documents.title, mimeType: documents.mimeType, sizeBytes: documents.sizeBytes, storageKey: documents.storageKey })
+      .from(documents)
+      .where(and(eq(documents.kind, 'file'), isNull(documents.textIndexedAt), isNull(documents.deletedAt), isNotNull(documents.storageKey)))
+      .orderBy(asc(documents.createdAt))
+      .limit(1);
+    if (doc) return { table: 'document', ...doc, storageKey: doc.storageKey! };
+    const [att] = await this.db
+      .select({ id: attachments.id, fileName: attachments.fileName, mimeType: attachments.mimeType, sizeBytes: attachments.sizeBytes, storageKey: attachments.storageKey })
+      .from(attachments)
+      .where(isNull(attachments.textIndexedAt))
+      .orderBy(asc(attachments.createdAt))
+      .limit(1);
+    if (att) return { table: 'attachment', id: att.id, title: att.fileName ?? 'image in a page', mimeType: att.mimeType, sizeBytes: att.sizeBytes, storageKey: att.storageKey };
+    return null;
   }
 
   private async loop() {
@@ -73,14 +107,9 @@ export class TextIndexService implements OnApplicationBootstrap, OnModuleDestroy
       do {
         this.again = false;
         while (!this.stopped) {
-          const [doc] = await this.db
-            .select({ id: documents.id, title: documents.title, mimeType: documents.mimeType, sizeBytes: documents.sizeBytes, storageKey: documents.storageKey })
-            .from(documents)
-            .where(and(eq(documents.kind, 'file'), isNull(documents.textIndexedAt), isNull(documents.deletedAt), isNotNull(documents.storageKey)))
-            .orderBy(asc(documents.createdAt))
-            .limit(1);
-          if (!doc) break;
-          await this.index(doc as typeof doc & { storageKey: string });
+          const job = await this.next();
+          if (!job) break;
+          await this.index(job);
         }
       } while (this.again && !this.stopped);
     } catch (err) {
@@ -91,27 +120,34 @@ export class TextIndexService implements OnApplicationBootstrap, OnModuleDestroy
     }
   }
 
-  private async index(doc: { id: string; title: string; mimeType: string | null; sizeBytes: number | null; storageKey: string }) {
-    this.current = doc.title;
+  private async index(job: Job) {
+    this.current = job.title;
     let text = '';
     let source: Source;
     try {
-      ({ text, source } = await this.extract(doc));
+      ({ text, source } = await this.extract(job));
     } catch (err) {
-      this.logger.warn(`Could not read text from "${doc.title}": ${(err as Error).message.split('\n')[0]}`);
+      this.logger.warn(`Could not read text from "${job.title}": ${(err as Error).message.split('\n')[0]}`);
       source = 'failed';
     }
     text = tidy(text);
+    if (!/[^\s\f]/.test(text)) text = '';
     if (!text && source !== 'unsupported' && source !== 'failed') source = 'empty';
+    const set = { textContent: text || null, textSource: source, textIndexedAt: new Date() };
+    if (job.table === 'attachment') {
+      await this.db.update(attachments).set(set).where(eq(attachments.id, job.id));
+      return;
+    }
     // Only if the blob is still the one we read (a text file may have been edited meanwhile); keep updated_at as is.
     await this.db
       .update(documents)
-      .set({ textContent: text || null, textSource: source, textIndexedAt: new Date(), updatedAt: sql`${documents.updatedAt}` })
-      .where(and(eq(documents.id, doc.id), eq(documents.storageKey, doc.storageKey)));
+      .set({ ...set, updatedAt: sql`${documents.updatedAt}` })
+      .where(and(eq(documents.id, job.id), eq(documents.storageKey, job.storageKey)));
   }
 
-  private async extract(doc: { title: string; mimeType: string | null; sizeBytes: number | null; storageKey: string }): Promise<{ text: string; source: Source }> {
-    const kind = fileKind(doc.title, doc.mimeType, isTextFile(doc.title, doc.mimeType));
+  private async extract(doc: Job): Promise<{ text: string; source: Source }> {
+    // Page images are always images (their file name may be missing or generic).
+    const kind = doc.table === 'attachment' ? fileKind('', doc.mimeType, false) : fileKind(doc.title, doc.mimeType, isTextFile(doc.title, doc.mimeType));
     const path = this.storage.pathFor(doc.storageKey);
     const tools = await toolsAvailable();
     const ocr = await this.settings.get('search');

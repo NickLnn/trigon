@@ -174,6 +174,8 @@ export class FilesController {
       .insert(attachments)
       .values({ documentId, storageKey, mimeType, fileName, sizeBytes: data.length, sourceUrl, createdById: user.id })
       .returning({ id: attachments.id });
+    // OCR it in the background, so the page is found by the words in its screenshots.
+    this.textIndex.kick();
     return { id: row.id, url: `/api/files/attachments/${row.id}` };
   }
 
