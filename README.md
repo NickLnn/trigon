@@ -133,13 +133,13 @@ npm run dev                 # api on :4000 (+ ws :4001), web on :3000
 | Text & code (.txt, .md, .yaml, .json, .ps1, .sh, .py, .conf, …) | **Editable** in the built-in code editor |
 | PDF | Viewer with search, zoom, page jump |
 | Word (.docx), Excel (.xlsx), PowerPoint (.pptx) | **Read-only** preview in the browser — download to edit |
-| Visio (.vsdx) | Download only (no browser preview yet) |
+| Visio (.vsdx) | Download only (no browser preview yet) — shape text and shape data are searchable |
 | Images | Inline preview |
 | Anything else | Stored and downloadable |
 
-**Search inside files.** The text of uploaded PDFs, Word, Excel, PowerPoint, OpenDocument and text files
-is indexed in the background, so search finds what is inside them. Scanned PDFs and images are read with
-OCR (Tesseract, English + Greek built in — [add more languages](docs/ocr-languages.md)). It runs one file
+**Search inside files.** The text of uploaded PDFs, Word, Excel, PowerPoint, Visio, OpenDocument and text files
+is indexed in the background, so search finds what is inside them. Scanned PDFs, images and screenshots
+pasted into pages are read with OCR (Tesseract, English + Greek built in — [add more languages](docs/ocr-languages.md)). It runs one file
 at a time at low priority and stores only the text, in the database.
 
 > **Why Office files are read-only:** in-browser editing of Word/Excel/PowerPoint needs an office

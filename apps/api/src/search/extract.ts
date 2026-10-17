@@ -5,7 +5,7 @@ export const MAX_TEXT = 1_000_000;
 /** Never inflate more than this from one zip entry (guards against zip bombs). */
 const MAX_ENTRY = 50 * 1024 * 1024;
 
-export type FileKind = 'text' | 'pdf' | 'image' | 'docx' | 'xlsx' | 'pptx' | 'odf' | null;
+export type FileKind = 'text' | 'pdf' | 'image' | 'docx' | 'xlsx' | 'pptx' | 'odf' | 'vsdx' | null;
 
 const EXT_KIND: Record<string, FileKind> = {
   pdf: 'pdf',
@@ -25,6 +25,8 @@ const EXT_KIND: Record<string, FileKind> = {
   odt: 'odf',
   ods: 'odf',
   odp: 'odf',
+  vsdx: 'vsdx',
+  vsdm: 'vsdx',
 };
 
 /** Which reader handles a file, from its name (MIME types from browsers are unreliable). */
@@ -109,7 +111,7 @@ function runs(xml: string, pattern: RegExp): string {
 const byNumber = (a: string, b: string) => Number(a.match(/(\d+)\.xml$/)?.[1] ?? 0) - Number(b.match(/(\d+)\.xml$/)?.[1] ?? 0);
 
 /** Plain text of a .docx / .xlsx / .pptx / OpenDocument file. */
-export function officeText(buf: Buffer, kind: 'docx' | 'xlsx' | 'pptx' | 'odf'): string {
+export function officeText(buf: Buffer, kind: 'docx' | 'xlsx' | 'pptx' | 'odf' | 'vsdx'): string {
   const zip = readZip(buf);
   const part = (name: string) => zip.get(name)?.().toString('utf8') ?? '';
   const names = [...zip.keys()];
@@ -126,6 +128,7 @@ export function officeText(buf: Buffer, kind: 'docx' | 'xlsx' | 'pptx' | 'odf'):
     const sheets = [...part('xl/workbook.xml').matchAll(/<sheet\b[^>]*\bname="([^"]*)"/g)].map((m) => decodeXml(m[1]));
     return sheets.join('\n') + '\n' + runs(part('xl/sharedStrings.xml'), /<t(?:\s[^>]*)?>([^<]*)<\/t>|<\/si>/g);
   }
+  if (kind === 'vsdx') return visioText(part, names);
   // OpenDocument: mixed content in content.xml.
   return decodeXml(
     part('content.xml')
@@ -133,4 +136,34 @@ export function officeText(buf: Buffer, kind: 'docx' | 'xlsx' | 'pptx' | 'odf'):
       .replace(/<text:(tab|s)\b[^>]*\/>/g, ' ')
       .replace(/<[^>]+>/g, ''),
   );
+}
+
+/**
+ * Visio (.vsdx): page names, the text of every shape, and shape data values (e.g. a server's
+ * IP address or asset tag), page by page.
+ */
+function visioText(part: (name: string) => string, names: string[]): string {
+  // Visio writes attributes in single quotes; accept either.
+  const pageNames = [...part('visio/pages/pages.xml').matchAll(/<Page\b[^>]*?\sName=(['"])(.*?)\1/g)].map((m) => decodeXml(m[2]));
+  const pages = names.filter((n) => /^visio\/pages\/page\d+\.xml$/.test(n)).sort(byNumber);
+  const out: string[] = [];
+  pages.forEach((n, i) => {
+    const xml = part(n);
+    const lines: string[] = [];
+    if (pageNames[i]) lines.push(pageNames[i]);
+    // Shape text: mixed content with formatting markers (<cp/>, <pp/>, <tp/>, <fld>…</fld>).
+    for (const m of xml.matchAll(/<Text(?:\s[^>]*)?>([\s\S]*?)<\/Text>/g)) {
+      const t = decodeXml(m[1].replace(/<[^>]+>/g, '')).trim();
+      if (t) lines.push(t);
+    }
+    // Shape data rows: <Section N="Property"><Row N="IP"><Cell N="Value" V="10.0.0.5" …/>
+    for (const sec of xml.matchAll(/<Section N=(['"])Property\1>([\s\S]*?)<\/Section>/g)) {
+      for (const v of sec[2].matchAll(/<Cell N=(['"])Value\1 V=(['"])(.*?)\2/g)) {
+        const t = decodeXml(v[3]).trim();
+        if (t && !/^(0|1|TRUE|FALSE)$/i.test(t)) lines.push(t);
+      }
+    }
+    out.push(lines.join('\n'));
+  });
+  return out.join('\n\n');
 }

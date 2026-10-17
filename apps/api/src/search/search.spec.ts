@@ -103,6 +103,18 @@ describe('extract', () => {
     assert.equal(tidy(officeText(odt, 'odf')), 'Title\nHello world !');
   });
 
+  it('reads Visio shape text, shape data and page names', () => {
+    const vsdx = zip({
+      'visio/pages/pages.xml':
+        "<?xml version='1.0' encoding='utf-8' ?><Pages xmlns='http://schemas.microsoft.com/office/visio/2012/main'><Page ID='0' NameU='Page-1' IsCustomNameU='1' Name='Δίκτυο Αθήνα'><PageSheet/><Rel r:id='rId1'/></Page><Page ID='4' NameU='Rack' Name='Rack'><Rel r:id='rId2'/></Page></Pages>",
+      'visio/pages/page1.xml':
+        "<PageContents><Shapes><Shape ID='1'><Section N='Property'><Row N='IP'><Cell N='Value' V='10.20.0.5' U='STR'/><Cell N='Label' V='IP address'/></Row><Row N='Hidden'><Cell N='Value' V='0'/></Row></Section><Text><cp IX='0'/>Core switch<pp IX='0'/>\nSW-ATH-01</Text></Shape><Shape ID='2'><Text>Firewall &amp; VPN</Text></Shape></Shapes></PageContents>",
+      'visio/pages/page2.xml': "<PageContents><Shapes><Shape ID='3'><Text><fld IX='0'>Rack A</fld></Text></Shape></Shapes></PageContents>",
+    });
+    assert.equal(fileKind('Network.VSDX', null, false), 'vsdx');
+    assert.equal(tidy(officeText(vsdx, 'vsdx')), 'Δίκτυο Αθήνα\nCore switch\nSW-ATH-01\nFirewall & VPN\n10.20.0.5\n\nRack\nRack A');
+  });
+
   it('keeps PDF page breaks, including blank leading pages', () => {
     assert.equal(tidy('\f\n first  page \n\f\fthird\n\n\n\nend \n'), '\ffirst page\f\fthird\n\nend');
   });

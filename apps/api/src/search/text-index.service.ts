@@ -160,6 +160,7 @@ export class TextIndexService implements OnApplicationBootstrap, OnModuleDestroy
       case 'xlsx':
       case 'pptx':
       case 'odf':
+      case 'vsdx':
         return { text: officeText(await this.storage.read(doc.storageKey), kind), source: 'text' };
       case 'pdf': {
         if (!tools.pdf) return { text: '', source: 'unsupported' };
