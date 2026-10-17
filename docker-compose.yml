@@ -46,6 +46,8 @@ services:
 
   api:
     container_name: trigon-api
+    # A tiny init (tini) as PID 1 reaps any orphaned child processes, so zombies can never pile up.
+    init: true
     image: ghcr.io/nicklnn/trigon-api:${TRIGON_TAG:-latest}
     restart: unless-stopped
     labels: &autoupdate
@@ -80,6 +82,7 @@ services:
 
   web:
     container_name: trigon-web
+    init: true
     image: ghcr.io/nicklnn/trigon-web:${TRIGON_TAG:-latest}
     restart: unless-stopped
     labels: *autoupdate
