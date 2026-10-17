@@ -167,6 +167,7 @@ export const ACTIVITY_ACTIONS = {
   'backup.failed': { category: 'admin', label: 'Backup failed' },
   'backup.restored': { category: 'admin', label: 'Restored a backup' },
   'backup.deleted': { category: 'admin', label: 'Deleted a backup' },
+  'storage.cleaned': { category: 'admin', label: 'Removed leftover files' },
 } as const satisfies Record<string, { category: ActivityCategory; label: string }>;
 export type ActivityAction = keyof typeof ACTIVITY_ACTIONS;
 
@@ -570,6 +571,31 @@ export interface LdapSettings {
   groupFilter: string;
   tlsRejectUnauthorized: boolean;
   syncCron: string;
+}
+
+// ─── Storage overview (Settings → Storage) ───
+
+export interface StorageOverview {
+  /** Where uploaded files and page images are kept. */
+  storage: { driver: 'local' | 's3'; location: string };
+  /** The disk the files are on (null for S3 or when unknown). */
+  disk: { freeBytes: number; totalBytes: number } | null;
+  files: { count: number; bytes: number };
+  pageImages: { count: number; bytes: number };
+  trash: { items: number; bytes: number; purgeDays: number };
+  /** Database size; page text and history live here. */
+  database: { bytes: number; historyBytes: number; versions: number };
+  /** Backups in the "This server" folder (null when that destination isn't used or can't be read). */
+  backups: { count: number; bytes: number; location: string } | null;
+  largest: { id: string; title: string; mimeType: string | null; spaceName: string; sizeBytes: number }[];
+  spaces: { id: string; name: string; bytes: number; files: number }[];
+}
+
+/** Stored blobs nothing refers to any more (e.g. an upload interrupted halfway). Only those older than a day count. */
+export interface StorageLeftovers {
+  count: number;
+  bytes: number;
+  scannedAt: string;
 }
 
 // ─── Comments ───

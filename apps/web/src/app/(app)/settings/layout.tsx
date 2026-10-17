@@ -1,6 +1,6 @@
 'use client';
 
-import { Building2, ChevronLeft, ChevronRight, DatabaseBackup, Mail, ScanText, SlidersHorizontal, UserRound, Users } from 'lucide-react';
+import { Building2, ChevronLeft, ChevronRight, DatabaseBackup, HardDrive, Mail, ScanText, SlidersHorizontal, UserRound, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
@@ -24,6 +24,7 @@ const SETTINGS_SECTIONS = [
   { href: '/settings/ldap', label: 'LDAP / Active Directory', hint: 'Domain sign-in and group sync', icon: Building2 },
   { href: '/settings/email', label: 'Email', hint: 'How Trigon sends notifications', icon: Mail },
   { href: '/settings/search', label: 'Search', hint: 'File text, OCR and languages', icon: ScanText },
+  { href: '/settings/storage', label: 'Storage', hint: 'Disk use, largest files, leftovers', icon: HardDrive },
   { href: '/settings/backups', label: 'Backups', hint: 'When, where, and restore', icon: DatabaseBackup },
   { href: '/settings/users', label: 'Users', hint: 'Roles, access and passwords', icon: UserRound },
   { href: '/settings/groups', label: 'Groups', hint: 'Local and synced groups', icon: Users },

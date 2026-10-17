@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, statfs, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
@@ -44,5 +44,28 @@ export class StorageService implements OnModuleInit {
 
   async remove(key: string) {
     await unlink(this.pathFor(key)).catch(() => undefined);
+  }
+
+  /** Every stored blob (for the storage overview's leftover check). */
+  async *list(): AsyncGenerator<{ key: string; size: number; modified: Date }> {
+    for (const shard of await readdir(this.root).catch(() => [] as string[])) {
+      if (!/^[0-9a-f]{2}$/.test(shard)) continue;
+      for (const key of await readdir(join(this.root, shard)).catch(() => [] as string[])) {
+        if (!/^[0-9a-f-]{36}$/.test(key) || key.slice(0, 2) !== shard) continue;
+        const s = await stat(join(this.root, shard, key)).catch(() => null);
+        if (s?.isFile()) yield { key, size: s.size, modified: s.mtime };
+      }
+    }
+  }
+
+  /** Free and total space of the disk the files are on. */
+  async disk(): Promise<{ freeBytes: number; totalBytes: number } | null> {
+    const s = await statfs(this.root).catch(() => null);
+    return s ? { freeBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize } : null;
+  }
+
+  /** Where files are kept, for display. */
+  describe() {
+    return { driver: 'local' as const, location: this.root };
   }
 }
