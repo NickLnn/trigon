@@ -1,71 +1,86 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createReadStream } from 'node:fs';
-import { mkdir, readdir, readFile, stat, statfs, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import type { Readable } from 'node:stream';
+import { LocalStore, S3Store, s3ConfigFromEnv, type BlobStore } from './storage-drivers';
 
 /**
- * Local-disk blob storage. Keys are random UUIDs sharded into two-char directories.
- * Swap for an S3-compatible implementation later without touching callers.
+ * Blob storage for uploaded files, page images and icons: this server's disk (STORAGE_DIR, the default)
+ * or any S3-compatible bucket (STORAGE_DRIVER=s3 with S3_*). Keys are random UUIDs, laid out the same
+ * way in both (xx/<uuid>), so files can be copied from one to the other.
  */
 @Injectable()
 export class StorageService implements OnModuleInit {
-  private root: string;
+  private readonly logger = new Logger(StorageService.name);
+  private store: BlobStore;
 
-  constructor(private readonly config: ConfigService) {}
-
-  async onModuleInit() {
-    this.root = resolve(this.config.get('STORAGE_DIR') ?? './storage');
-    await mkdir(this.root, { recursive: true });
+  constructor(private readonly config: ConfigService) {
+    const s3 = s3ConfigFromEnv((k) => this.config.get<string>(k));
+    this.store = s3 ? new S3Store(s3) : new LocalStore(resolve(this.config.get('STORAGE_DIR') ?? './storage'));
   }
 
-  /** Where a blob lives on disk (read-only use, e.g. handing a PDF to pdftotext). */
-  pathFor(key: string) {
-    if (!/^[0-9a-f-]{36}$/.test(key)) throw new Error('Invalid storage key');
-    return join(this.root, key.slice(0, 2), key);
+  async onModuleInit() {
+    try {
+      await this.store.init();
+      if (this.store.driver === 's3') this.logger.log(`Files are stored in S3: ${this.store.location()}`);
+    } catch (err) {
+      // Start anyway (pages and settings still work) but make the problem obvious in the logs.
+      this.logger.error(`File storage (${this.store.driver}) is not reachable: ${(err as Error).message}`);
+    }
   }
 
   async put(data: Buffer): Promise<string> {
     const key = randomUUID();
-    const path = this.pathFor(key);
-    await mkdir(join(this.root, key.slice(0, 2)), { recursive: true });
-    await writeFile(path, data);
+    await this.store.put(key, data);
     return key;
   }
 
-  stream(key: string) {
-    return createReadStream(this.pathFor(key));
+  /** The blob as a stream (for responses). Rejects if it doesn't exist. */
+  stream(key: string): Promise<Readable> {
+    return this.store.stream(key);
   }
 
   read(key: string): Promise<Buffer> {
-    return readFile(this.pathFor(key));
+    return this.store.read(key);
   }
 
   async remove(key: string) {
-    await unlink(this.pathFor(key)).catch(() => undefined);
+    await this.store.remove(key).catch(() => undefined);
   }
 
-  /** Every stored blob (for the storage overview's leftover check). */
-  async *list(): AsyncGenerator<{ key: string; size: number; modified: Date }> {
-    for (const shard of await readdir(this.root).catch(() => [] as string[])) {
-      if (!/^[0-9a-f]{2}$/.test(shard)) continue;
-      for (const key of await readdir(join(this.root, shard)).catch(() => [] as string[])) {
-        if (!/^[0-9a-f-]{36}$/.test(key) || key.slice(0, 2) !== shard) continue;
-        const s = await stat(join(this.root, shard, key)).catch(() => null);
-        if (s?.isFile()) yield { key, size: s.size, modified: s.mtime };
-      }
+  /** Run `fn` with the blob as a file on local disk (S3 blobs are downloaded to a temp file and removed after). */
+  async withLocalFile<T>(key: string, fn: (path: string) => Promise<T>): Promise<T> {
+    const { path, cleanup } = await this.store.localFile(key);
+    try {
+      return await fn(path);
+    } finally {
+      await cleanup().catch(() => undefined);
     }
   }
 
-  /** Free and total space of the disk the files are on. */
-  async disk(): Promise<{ freeBytes: number; totalBytes: number } | null> {
-    const s = await statfs(this.root).catch(() => null);
-    return s ? { freeBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize } : null;
+  /** Every stored blob (for the storage overview's leftover check). */
+  list() {
+    return this.store.list();
+  }
+
+  /** Free and total space of the disk the files are on (null for S3). */
+  disk() {
+    return this.store.disk();
   }
 
   /** Where files are kept, for display. */
   describe() {
-    return { driver: 'local' as const, location: this.root };
+    return { driver: this.store.driver, location: this.store.location() };
+  }
+
+  /** Local folder backups pack up, or null when files live in S3 (backups then hold the database only). */
+  localRoot(): string | null {
+    return this.store.driver === 'local' ? this.store.location() : null;
+  }
+
+  /** Put the files from a restored backup's storage folder back. */
+  importDir(dir: string) {
+    return (this.store as LocalStore | S3Store).importDir(dir);
   }
 }

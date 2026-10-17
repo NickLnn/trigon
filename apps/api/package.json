@@ -27,6 +27,7 @@
     "@nestjs/throttler": "^6.4.0",
     "@node-rs/argon2": "^2.0.2",
     "@trigon/shared": "*",
+    "aws4fetch": "^1.0.20",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "cookie-parser": "^1.4.7",

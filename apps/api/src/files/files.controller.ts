@@ -116,13 +116,15 @@ export class FilesController {
     await this.perms.assertDocument(user, documentId, 'view');
     const [doc] = await this.db.select().from(documents).where(eq(documents.id, documentId));
     if (!doc?.storageKey) throw new NotFoundException();
+    // Open the blob first: a missing one is a plain 404, without the file's headers.
+    const body = await this.storage.stream(doc.storageKey).catch(() => Promise.reject(new NotFoundException()));
     res.set({
       'Content-Type': doc.mimeType ?? 'application/octet-stream',
       'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(doc.title)}`,
       'Cache-Control': 'private, max-age=300',
       'X-Content-Type-Options': 'nosniff',
     });
-    return new StreamableFile(this.storage.stream(doc.storageKey));
+    return new StreamableFile(body);
   }
 
   /** Save edits to a text/code file node (yaml, json, txt, scripts…). The previous blob is replaced. */
@@ -184,6 +186,8 @@ export class FilesController {
     const [att] = await this.db.select().from(attachments).where(eq(attachments.id, id));
     if (!att) throw new NotFoundException();
     await this.perms.assertDocument(user, att.documentId, 'view');
+    // Open the blob first: a missing one is a plain 404, without the file's headers.
+    const body = await this.storage.stream(att.storageKey).catch(() => Promise.reject(new NotFoundException()));
     res.set({
       'Content-Type': att.mimeType,
       'Cache-Control': 'private, max-age=86400, immutable',
@@ -191,6 +195,6 @@ export class FilesController {
       // SVGs can carry script; sandbox them when opened directly
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     });
-    return new StreamableFile(this.storage.stream(att.storageKey));
+    return new StreamableFile(body);
   }
 }

@@ -148,7 +148,6 @@ export class TextIndexService implements OnApplicationBootstrap, OnModuleDestroy
   private async extract(doc: Job): Promise<{ text: string; source: Source }> {
     // Page images are always images (their file name may be missing or generic).
     const kind = doc.table === 'attachment' ? fileKind('', doc.mimeType, false) : fileKind(doc.title, doc.mimeType, isTextFile(doc.title, doc.mimeType));
-    const path = this.storage.pathFor(doc.storageKey);
     const tools = await toolsAvailable();
     const ocr = await this.settings.get('search');
     const canOcr = ocr.ocrEnabled && tools.ocr && ocr.ocrLanguages.length > 0;
@@ -164,15 +163,17 @@ export class TextIndexService implements OnApplicationBootstrap, OnModuleDestroy
         return { text: officeText(await this.storage.read(doc.storageKey), kind), source: 'text' };
       case 'pdf': {
         if (!tools.pdf) return { text: '', source: 'unsupported' };
-        const pages = await pdfPages(path);
-        const scanned = pages.map((p, i) => (p.replace(/\s/g, '').length < SCANNED_PAGE_CHARS ? i + 1 : 0)).filter(Boolean);
-        if (!scanned.length || !canOcr) return { text: pages.join('\n\n'), source: 'text' };
-        const read = await ocrPdfPages(path, scanned.slice(0, ocr.ocrMaxPages), ocr.ocrLanguages);
-        return { text: pages.map((p, i) => read.get(i + 1) ?? p).join('\n\n'), source: 'ocr' };
+        return this.storage.withLocalFile(doc.storageKey, async (path) => {
+          const pages = await pdfPages(path);
+          const scanned = pages.map((p, i) => (p.replace(/\s/g, '').length < SCANNED_PAGE_CHARS ? i + 1 : 0)).filter(Boolean);
+          if (!scanned.length || !canOcr) return { text: pages.join(PAGE_BREAK), source: 'text' as const };
+          const read = await ocrPdfPages(path, scanned.slice(0, ocr.ocrMaxPages), ocr.ocrLanguages);
+          return { text: pages.map((p, i) => read.get(i + 1) ?? p).join(PAGE_BREAK), source: 'ocr' as const };
+        });
       }
       case 'image':
         if (!canOcr || (doc.sizeBytes ?? 0) > MAX_IMAGE_BYTES) return { text: '', source: 'unsupported' };
-        return { text: await ocrImage(path, ocr.ocrLanguages), source: 'ocr' };
+        return { text: await this.storage.withLocalFile(doc.storageKey, (path) => ocrImage(path, ocr.ocrLanguages)), source: 'ocr' };
       default:
         return { text: '', source: 'unsupported' };
     }

@@ -101,12 +101,14 @@ export class IconsController {
   async serve(@Param('id', ParseUUIDPipe) id: string, @Res({ passthrough: true }) res: Response) {
     const [row] = await this.db.select().from(icons).where(eq(icons.id, id));
     if (!row) throw new NotFoundException();
+    // Open the blob first: a missing one is a plain 404, without the file's headers.
+    const body = await this.storage.stream(row.storageKey).catch(() => Promise.reject(new NotFoundException()));
     res.set({
       'Content-Type': row.mimeType,
       'Cache-Control': 'private, max-age=604800, immutable',
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     });
-    return new StreamableFile(this.storage.stream(row.storageKey));
+    return new StreamableFile(body);
   }
 }
