@@ -5,9 +5,10 @@ import { languages } from '@codemirror/language-data';
 import { useQueryClient } from '@tanstack/react-query';
 import { githubDark, githubLight } from '@uiw/codemirror-theme-github';
 import CodeMirror, { EditorView, type Extension } from '@uiw/react-codemirror';
-import { Check, Loader2, Save } from 'lucide-react';
+import { Check, Copy, Loader2, Save } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, apiBlob } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import { useMediaQuery } from '@/lib/use-media';
 
 function useDarkMode() {
@@ -36,6 +37,7 @@ export function CodeFileEditor({ documentId, fileName, editable }: { documentId:
   const [languageName, setLanguageName] = useState<string>('Plain text');
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const dirty = original !== null && value !== original;
 
   useEffect(() => {
@@ -84,6 +86,12 @@ export function CodeFileEditor({ documentId, fileName, editable }: { documentId:
     return () => window.removeEventListener('keydown', onKey);
   }, [save]);
 
+  /** Copies what is on screen (including unsaved edits). */
+  const copy = async () => {
+    setCopied((await copyText(value)) ? 'copied' : 'failed');
+    setTimeout(() => setCopied('idle'), 1500);
+  };
+
   // Warn before leaving with unsaved edits.
   useEffect(() => {
     if (!dirty) return;
@@ -102,6 +110,15 @@ export function CodeFileEditor({ documentId, fileName, editable }: { documentId:
         {!editable && <span className="text-meta text-ink-3">View only</span>}
         <span className="flex-1" />
         {status === 'error' && <span className="text-meta text-danger">{error}</span>}
+        <button
+          onClick={copy}
+          className="press inline-flex items-center gap-1.5 rounded-pill border border-line bg-surface px-3.5 py-1.5 text-sm font-semibold text-ink-2 hover:text-ink"
+          title="Copy the whole file"
+          aria-label="Copy code"
+        >
+          {copied === 'copied' ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
+          {copied === 'copied' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy'}
+        </button>
         {editable && (
           <button
             onClick={save}

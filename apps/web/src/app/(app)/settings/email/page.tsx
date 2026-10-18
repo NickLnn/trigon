@@ -8,6 +8,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@/components/settings/ui';
 import { useEmailMicrosoftStatus, useEmailTest, useSaveSettings, useSettings } from '@/lib/admin-queries';
 import { api } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import { useSession } from '@/lib/session';
 
 function MicrosoftLogo({ className }: { className?: string }) {
@@ -81,7 +82,7 @@ function CopyBlock({ text }: { text: string }) {
       <button
         type="button"
         onClick={() => {
-          navigator.clipboard?.writeText(text);
+          void copyText(text);
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }}

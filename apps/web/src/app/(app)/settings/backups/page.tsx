@@ -8,6 +8,7 @@ import { Badge, Button, Field, Result, SettingsCard, TextInput, Toggle } from '@
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { relativeTime } from '@/components/ui/doc-icon';
 import { api } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 
 const PRESETS = [
   { cron: '0 2 * * *', label: 'Every night at 02:00' },
@@ -40,7 +41,7 @@ function CopyBlock({ text }: { text: string }) {
       <button
         type="button"
         onClick={() => {
-          navigator.clipboard?.writeText(text);
+          void copyText(text);
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }}
