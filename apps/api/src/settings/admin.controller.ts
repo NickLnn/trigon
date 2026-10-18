@@ -22,6 +22,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { accounts, groupMembers, groups, refreshTokens, users } from '../db/schema';
+import { UserStatusService } from '../auth/user-status.service';
 import { IdentityService } from '../users/identity.service';
 
 class CreateUserDto {
@@ -59,6 +60,7 @@ export class AdminController {
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
     private readonly notifications: NotificationsService,
+    private readonly statuses: UserStatusService,
   ) {}
 
   @Get('users')
@@ -124,6 +126,8 @@ export class AdminController {
       .update(users)
       .set({ ...dto, ...(dto.active !== undefined && { disabledByAdmin: !dto.active }) })
       .where(eq(users.id, id));
+    // Takes effect on the user's next request (and live-editing message), not when their token expires.
+    this.statuses.invalidate(id);
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const f of ['role', 'active', 'displayName'] as const) {
       if (dto[f] !== undefined && dto[f] !== before[f]) changes[f] = { from: before[f], to: dto[f] };

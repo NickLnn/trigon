@@ -11,6 +11,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { LdapStrategy } from './strategies/ldap.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 import { TokensService } from './tokens.service';
+import { UserStatusService } from './user-status.service';
 
 @Global()
 @Module({
@@ -28,7 +29,7 @@ import { TokensService } from './tokens.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [TokensService, EntraAuthService, LoginAttemptsService, LocalStrategy, LdapStrategy, JwtStrategy],
-  exports: [TokensService],
+  providers: [TokensService, UserStatusService, EntraAuthService, LoginAttemptsService, LocalStrategy, LdapStrategy, JwtStrategy],
+  exports: [TokensService, UserStatusService],
 })
 export class AuthModule {}

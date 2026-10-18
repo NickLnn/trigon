@@ -3,7 +3,7 @@ import { and, asc, eq, ilike, or } from 'drizzle-orm';
 import { Database, InjectDb } from '../db/db.module';
 import { groups, users } from '../db/schema';
 
-/** Directory lookups used by share dialogs and mentions. */
+/** Directory lookups used by share dialogs and mentions (every signed-in user, viewers included). */
 @Controller()
 export class UsersController {
   constructor(@InjectDb() private readonly db: Database) {}

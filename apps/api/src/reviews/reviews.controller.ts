@@ -282,6 +282,8 @@ export class ReviewsController {
   async cancel(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     const req = await this.pendingFor(user, id);
     const { level, spaceId } = await this.perms.documentLevel(user, req.documentId);
+    // Even the person who asked must still be able to open the item.
+    if (!atLeast(level, 'view')) throw new ForbiddenException('You can’t open this item any more.');
     if (req.requestedById !== user.id && !atLeast(level, 'manage')) throw new ForbiddenException('Only the person who asked can cancel this review.');
     await this.db.update(reviewRequests).set({ status: 'cancelled', respondedAt: new Date() }).where(eq(reviewRequests.id, id));
     const [doc] = await this.db.select({ title: documents.title, kind: documents.kind }).from(documents).where(eq(documents.id, req.documentId));
