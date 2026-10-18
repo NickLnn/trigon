@@ -1,0 +1,11 @@
+# Local development: expose Postgres and Redis on this machine only (127.0.0.1), for `npm run dev`.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
+# Never use this override on a server: the main docker-compose.yml keeps the databases off the network.
+services:
+  postgres:
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+
+  redis:
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'

@@ -2,11 +2,15 @@
 #
 #   Run / update (e.g. on the Synology):   docker compose pull && docker compose up -d
 #   Update automatically instead:          set COMPOSE_PROFILES=autoupdate in .env, then docker compose up -d
-#   Only the databases (local development): docker compose up -d postgres redis
+#   Only the databases (local development, ports on 127.0.0.1):
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
 #   Build the app images from source instead:
 #     docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 # TRIGON_TAG in .env picks the channel: latest (main branch, stable) or dev (dev branch).
+#
+# Only the web port is published. Postgres, Redis and the live-editing server are reachable inside this
+# project's network only (the web container forwards /collab), so nothing else on the LAN can talk to them.
 name: trigon
 
 services:
@@ -21,8 +25,6 @@ services:
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
-    ports:
-      - '${POSTGRES_PORT:-5432}:5432'
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 5s
@@ -33,11 +35,12 @@ services:
     container_name: trigon-redis
     image: redis:7-alpine
     restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes']
+    # Password-protected when REDIS_PASSWORD is set in .env (recommended).
+    command: redis-server --appendonly yes --protected-mode yes ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-}
     volumes:
       - ./data/redis:/data
-    ports:
-      - '${REDIS_PORT:-6379}:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -62,7 +65,7 @@ services:
       PGUSER: ${POSTGRES_USER:-trigon}
       PGPASSWORD: ${POSTGRES_PASSWORD}
       PGDATABASE: ${POSTGRES_DB:-trigon}
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://${REDIS_PASSWORD:+:${REDIS_PASSWORD}@}redis:6379
       API_PORT: 4000
       COLLAB_PORT: 4001
       STORAGE_DIR: /data/storage
@@ -72,8 +75,6 @@ services:
       - ./data/backups:/data/backups
       # Extra OCR languages: drop <code>.traineddata files here (English + Greek are built in). See docs/ocr-languages.md.
       - ./data/tessdata:/data/tessdata:ro
-    ports:
-      - '${COLLAB_PORT:-4001}:4001'
     depends_on:
       postgres:
         condition: service_healthy

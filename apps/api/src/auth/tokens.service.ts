@@ -3,10 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { ACCESS_COOKIE, REFRESH_COOKIE, type SystemRole } from '@trigon/shared';
 import { and, eq, isNull } from 'drizzle-orm';
-import type { CookieOptions, Response } from 'express';
+import type { CookieOptions, Request, Response } from 'express';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Database, InjectDb } from '../db/db.module';
 import { refreshTokens, users } from '../db/schema';
+import { requestOrigin } from '../directory/entra-redirect.service';
 
 export interface AccessPayload {
   sub: string;
@@ -29,10 +30,16 @@ export class TokensService {
     private readonly config: ConfigService,
   ) {}
 
-  private cookieBase(): CookieOptions {
+  /**
+   * httpOnly, SameSite=Lax, and Secure whenever the browser reached Trigon over HTTPS (seen through the
+   * proxy headers) or COOKIE_SECURE=true — so a session cookie set on the HTTPS address is never sent
+   * over plain HTTP, while LAN access over http:// keeps working.
+   */
+  private cookieBase(res: Response): CookieOptions {
+    const https = !!res.req && requestOrigin(res.req)?.startsWith('https://');
     return {
       httpOnly: true,
-      secure: this.config.get('COOKIE_SECURE') === 'true',
+      secure: this.config.get('COOKIE_SECURE') === 'true' || https,
       sameSite: 'lax',
       domain: this.config.get('COOKIE_DOMAIN') || undefined,
     };
@@ -57,9 +64,17 @@ export class TokensService {
     return this.jwt.verifyAsync<AccessPayload>(token);
   }
 
+  /** Id of the user signed in on this browser (valid access cookie), or null. */
+  async sessionUserId(req: Request): Promise<string | null> {
+    const raw = req.cookies?.[ACCESS_COOKIE];
+    if (!raw) return null;
+    const payload = await this.verify(raw).catch(() => null);
+    return payload?.typ === 'access' ? payload.sub : null;
+  }
+
   async issueSession(res: Response, user: { id: string; email: string; role: SystemRole }, userAgent?: string) {
     await this.writeRefresh(res, user.id, randomUUID(), userAgent);
-    res.cookie(ACCESS_COOKIE, await this.signAccess(user), { ...this.cookieBase(), path: '/', maxAge: 15 * 60_000 });
+    res.cookie(ACCESS_COOKIE, await this.signAccess(user), { ...this.cookieBase(res), path: '/', maxAge: 15 * 60_000 });
   }
 
   private async writeRefresh(res: Response, userId: string, familyId: string, userAgent?: string) {
@@ -71,7 +86,7 @@ export class TokensService {
       userAgent: userAgent?.slice(0, 255),
       expiresAt: new Date(Date.now() + this.refreshDays * 86_400_000),
     });
-    res.cookie(REFRESH_COOKIE, raw, { ...this.cookieBase(), path: '/', maxAge: this.refreshDays * 86_400_000 });
+    res.cookie(REFRESH_COOKIE, raw, { ...this.cookieBase(res), path: '/', maxAge: this.refreshDays * 86_400_000 });
   }
 
   /** Rotate a refresh token. Presenting an already-revoked token revokes its whole family. */
@@ -88,7 +103,7 @@ export class TokensService {
 
     await this.db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.id, row.id));
     await this.writeRefresh(res, user.id, row.familyId, userAgent);
-    res.cookie(ACCESS_COOKIE, await this.signAccess(user), { ...this.cookieBase(), path: '/', maxAge: 15 * 60_000 });
+    res.cookie(ACCESS_COOKIE, await this.signAccess(user), { ...this.cookieBase(res), path: '/', maxAge: 15 * 60_000 });
     return user;
   }
 
@@ -104,7 +119,7 @@ export class TokensService {
       const [row] = await this.db.select().from(refreshTokens).where(eq(refreshTokens.tokenHash, sha256(raw))).limit(1);
       if (row) await this.revokeFamily(row.familyId);
     }
-    res.clearCookie(ACCESS_COOKIE, { ...this.cookieBase(), path: '/' });
-    res.clearCookie(REFRESH_COOKIE, { ...this.cookieBase(), path: '/' });
+    res.clearCookie(ACCESS_COOKIE, { ...this.cookieBase(res), path: '/' });
+    res.clearCookie(REFRESH_COOKIE, { ...this.cookieBase(res), path: '/' });
   }
 }

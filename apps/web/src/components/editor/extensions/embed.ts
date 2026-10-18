@@ -56,14 +56,16 @@ export const Embed = Node.create({
   },
 
   renderHTML({ node, HTMLAttributes }) {
+    // This HTML is injected as-is (version preview, exports): only http(s) links, whatever the attributes say.
+    const href = /^https?:\/\//i.test(node.attrs.url ?? '') ? node.attrs.url : null;
     return [
       'div',
       mergeAttributes(HTMLAttributes, {
-        'data-embed': node.attrs.kind,
-        'data-url': node.attrs.url,
+        'data-embed': node.attrs.kind === 'video' ? 'video' : 'link',
+        'data-url': href,
         'data-title': node.attrs.title,
       }),
-      ['a', { href: node.attrs.url, rel: 'noopener noreferrer', target: '_blank' }, node.attrs.title ?? node.attrs.url],
+      ['a', { href, rel: 'noopener noreferrer', target: '_blank' }, node.attrs.title ?? node.attrs.url ?? ''],
     ];
   },
 

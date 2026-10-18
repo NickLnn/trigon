@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { hash } from '@node-rs/argon2';
 import type { AdminGroup, AdminUser, AuthProvider, SystemRole } from '@trigon/shared';
-import { IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { and, asc, count, desc, eq, ilike, isNull, ne, or, sql } from 'drizzle-orm';
 import { ActivityService } from '../activity/activity.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -33,7 +33,7 @@ class CreateUserDto {
 
 class UpdateUserDto {
   @IsOptional() @IsIn(['admin', 'editor', 'viewer']) role?: SystemRole;
-  @IsOptional() active?: boolean;
+  @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(120) displayName?: string;
 }
 
@@ -119,7 +119,11 @@ export class AdminController {
     }
     const [before] = await this.db.select().from(users).where(eq(users.id, id));
     if (!before) throw new NotFoundException();
-    await this.db.update(users).set(dto).where(eq(users.id, id));
+    // An admin's choice wins over directory sync and directory sign-in until an admin changes it again.
+    await this.db
+      .update(users)
+      .set({ ...dto, ...(dto.active !== undefined && { disabledByAdmin: !dto.active }) })
+      .where(eq(users.id, id));
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const f of ['role', 'active', 'displayName'] as const) {
       if (dto[f] !== undefined && dto[f] !== before[f]) changes[f] = { from: before[f], to: dto[f] };

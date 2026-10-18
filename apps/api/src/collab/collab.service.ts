@@ -127,8 +127,10 @@ export class CollabService implements OnModuleInit, OnApplicationShutdown {
     // is opt-in.
     const redisUrl = this.config.get<string>('REDIS_URL');
     if (redisUrl && this.config.get('COLLAB_REDIS') === 'true') {
-      const { hostname, port: redisPort } = new URL(redisUrl);
-      extensions.push(new HocuspocusRedis({ host: hostname, port: Number(redisPort || 6379) }));
+      const { hostname, port: redisPort, password } = new URL(redisUrl);
+      extensions.push(
+        new HocuspocusRedis({ host: hostname, port: Number(redisPort || 6379), options: password ? { password: decodeURIComponent(password) } : {} }),
+      );
     }
 
     this.server = new Server({

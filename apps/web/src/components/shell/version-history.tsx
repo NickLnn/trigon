@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { generateHTML } from '@tiptap/core';
 import type { DocumentVersion, DocumentVersionDetail } from '@trigon/shared';
+import DOMPurify from 'dompurify';
 import { ArrowLeft, History, Loader2, RotateCcw } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { contentExtensions } from '@/components/editor/extensions/content';
@@ -31,7 +32,8 @@ function VersionDetail({ documentId, id, canRestore, onBack, onRestored }: { doc
   const html = useMemo(() => {
     if (!data?.content) return '';
     try {
-      return generateHTML(data.content, contentExtensions);
+      // Old versions hold whatever collaborators synced, so the HTML is cleaned before it is injected.
+      return DOMPurify.sanitize(generateHTML(data.content, contentExtensions), { FORBID_TAGS: ['iframe', 'form', 'style'], ALLOW_DATA_ATTR: true });
     } catch {
       return '<p><em>This version can’t be shown.</em></p>';
     }

@@ -151,6 +151,27 @@ export function normalizeSmb(s: BackupSettings): BackupSettings {
   return { ...s, smbHost: host, smbShare: share, smbPath: folder };
 }
 
+/** Characters smbclient's -c parser or the auth file would treat as syntax (";" separates commands). */
+const SMB_NAME = /^[^\\/;"'`\x00-\x1f:*?<>|]{1,80}$/;
+const SMB_HOST = /^(\[[0-9a-f:.]+\]|[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?)$/i;
+const SMB_CRED = /^[^\x00-\x1f;]{0,255}$/;
+
+/**
+ * Reject SMB settings that could inject smbclient commands (e.g. a folder named `x; put /proc/self/environ y`)
+ * or extra lines into the credentials file. Returns the reason, or null when the settings are safe.
+ */
+export function smbProblem(settings: BackupSettings): string | null {
+  const s = normalizeSmb(settings);
+  if (s.smbHost && !SMB_HOST.test(s.smbHost)) return 'SMB server: use a host name or IP address.';
+  if (s.smbShare && !SMB_NAME.test(s.smbShare)) return 'SMB share: the name contains characters that are not allowed.';
+  if (s.smbPath.split('/').filter(Boolean).some((p) => !SMB_NAME.test(p) || p === '..' || p === '.')) {
+    return 'SMB folder: a folder name contains characters that are not allowed.';
+  }
+  if (!SMB_CRED.test(s.smbUser) || !SMB_CRED.test(s.smbDomain)) return 'SMB user or domain contains characters that are not allowed.';
+  if (/[\r\n\x00]/.test(s.smbPassword ?? '')) return 'SMB password: line breaks are not allowed.';
+  return null;
+}
+
 export class SmbDestination implements Destination {
   readonly label: string;
   private readonly bin = process.env.SMBCLIENT_BIN || 'smbclient';
@@ -167,6 +188,8 @@ export class SmbDestination implements Destination {
 
   private async exec(commands: string) {
     if (!this.s.smbHost || !this.s.smbShare) throw new Error('Enter the SMB server and share.');
+    const problem = smbProblem(this.s);
+    if (problem) throw new Error(problem);
     const authFile = join(tmpdir(), `trigon-smb-${process.pid}-${Date.now()}`);
     const args = [`//${this.s.smbHost}/${this.s.smbShare}`, '-m', 'SMB3', '-c', commands];
     if (this.s.smbUser) {

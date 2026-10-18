@@ -99,6 +99,13 @@
       "when": 1792275906928,
       "tag": "0013_fold_encoding_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792329947543,
+      "tag": "0014_admin_disabled",
+      "breakpoints": true
     }
   ]
 }

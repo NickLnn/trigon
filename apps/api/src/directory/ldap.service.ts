@@ -38,9 +38,17 @@ const USER_ATTRS = [
   'userAccountControl',
 ];
 
-/** RFC 4515 filter value escaping. */
+/**
+ * RFC 4515 filter value escaping: `\ * ( )` and NUL become `\XX`, so a login name can never change the
+ * structure of the search filter (e.g. `*)(objectClass=*` or `admin)(|(uid=*`).
+ */
 export function escapeLdapFilter(value: string): string {
   return value.replace(/[\\*()\0]/g, (c) => '\\' + c.charCodeAt(0).toString(16).padStart(2, '0'));
+}
+
+/** A login name worth sending to the directory: 1–256 characters, no control characters. */
+export function validLdapUsername(value: string): boolean {
+  return value.length > 0 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
 }
 
 const first = (v: Entry[string] | undefined): string | null => {
@@ -111,7 +119,7 @@ export class LdapService {
    * Returns null when the user does not exist or the password is wrong.
    */
   async authenticate(username: string, password: string): Promise<LdapUser | null> {
-    if (!username || !password) return null; // an empty password would be an unauthenticated bind
+    if (!validLdapUsername(username) || !password) return null; // an empty password would be an unauthenticated bind
     const s = await this.resolve();
     const filter = s.userFilter.replaceAll('{{username}}', escapeLdapFilter(username));
     const entry = await this.withServiceBind(s, async (c) => {

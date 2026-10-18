@@ -56,8 +56,9 @@ Trigon app containers — never Postgres, Redis or anything else on the host. Se
 
 ## Behind Cloudflare (later)
 
-Point the tunnel's public hostname at `http://<nas-ip>:<WEB_PORT>`, and add a second rule for the path
-`/collab` to `http://<nas-ip>:4001` (live editing). Then set `APP_URL=https://…` and `COOKIE_SECURE=true`.
+Point the tunnel's public hostname at `http://<nas-ip>:<WEB_PORT>` — that one port also carries live
+editing (`/collab`), so no second rule is needed (port 4001 is no longer published). Then set
+`APP_URL=https://…` and `COOKIE_SECURE=true`.
 
 Microsoft sign-in follows automatically: the first time an admin opens Trigon at the HTTPS address, Trigon
 registers that address with its Microsoft app. Installs connected before this existed show a one-time

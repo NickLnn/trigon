@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { EmailMicrosoftStatus, EmailSettings } from '@trigon/shared';
 import { createTransport } from 'nodemailer';
 import { EntraClientService, GRAPH } from '../directory/entra-client.service';
+import { storedSecretFor } from '../settings/secret-box';
 import { SettingsService } from '../settings/settings.service';
 import { testEmail } from '../notifications/messages';
 import { LOGO_PNG_BASE64 } from './logo';
@@ -56,11 +57,21 @@ export class EmailService {
       .catch((err: Error) => this.logger.error(`Email "${mail.subject}" failed: ${err.message}`));
   }
 
-  /** "Send test email" with the settings on screen; an empty password field means "use the stored one". */
+  /**
+   * "Send test email" with the settings on screen. An empty password field means "use the stored one",
+   * but only for the saved server and user — never to send the stored password somewhere else.
+   */
   async test(form: EmailSettings, to: string): Promise<{ ok: boolean; message: string }> {
     if (form.provider === 'none') return { ok: false, message: 'Choose how Trigon sends email first.' };
     const stored = await this.settings.get('email');
-    const s: EmailSettings = { ...form, smtpPassword: form.smtpPassword || stored.smtpPassword };
+    const smtpPassword =
+      form.provider === 'smtp'
+        ? storedSecretFor(form, stored, 'smtpPassword', ['smtpHost', 'smtpPort', 'smtpSecurity', 'smtpUser', 'smtpTlsRejectUnauthorized'])
+        : '';
+    if (smtpPassword === null) {
+      return { ok: false, message: 'The server or user changed, so the saved SMTP password can’t be used for this test. Type the password again.' };
+    }
+    const s: EmailSettings = { ...form, smtpPassword };
     try {
       const method = s.provider === 'smtp' ? `SMTP server ${s.smtpHost}` : 'Microsoft 365 / Exchange Online';
       await this.deliver(s, { ...testEmail({ base: await this.settings.publicUrl(), method, to }), to });

@@ -5,17 +5,19 @@ import type { EmbedInfo } from '@trigon/shared';
 import { ExternalLink, Globe } from 'lucide-react';
 import { useEffect } from 'react';
 import { api } from '@/lib/api';
+import { embedTarget, webUrl } from '@/lib/safe-url';
 
 export function EmbedView({ node, updateAttributes, selected, editor }: ReactNodeViewProps) {
-  const { url, kind, embedUrl, title, description, thumbnailUrl, provider } = node.attrs as {
+  const { url: rawUrl, title, description, thumbnailUrl: rawThumb, provider } = node.attrs as {
     url: string;
-    kind: 'video' | 'link';
-    embedUrl: string | null;
     title: string | null;
     description: string | null;
     thumbnailUrl: string | null;
     provider: string | null;
   };
+  // Nothing stored is trusted (any collaborator can set attributes): see embedTarget.
+  const { url, embedUrl } = embedTarget(rawUrl);
+  const thumbnailUrl = webUrl(rawThumb);
 
   // Unfurl once, by whichever collaborator inserted it (attrs then sync to everyone).
   useEffect(() => {
@@ -39,7 +41,7 @@ export function EmbedView({ node, updateAttributes, selected, editor }: ReactNod
 
   const ring = selected ? 'ring-2 ring-accent' : '';
 
-  if (kind === 'video' && embedUrl) {
+  if (embedUrl) {
     return (
       <NodeViewWrapper className="my-4" data-drag-handle>
         <div className={`relative aspect-video w-full overflow-hidden rounded-2xl bg-black ${ring}`}>
@@ -62,7 +64,7 @@ export function EmbedView({ node, updateAttributes, selected, editor }: ReactNod
   return (
     <NodeViewWrapper className="my-3" data-drag-handle>
       <a
-        href={url}
+        href={url ?? undefined}
         target="_blank"
         rel="noopener noreferrer"
         className={`press flex overflow-hidden rounded-2xl border border-line bg-surface no-underline ${ring}`}
@@ -71,9 +73,9 @@ export function EmbedView({ node, updateAttributes, selected, editor }: ReactNod
         <div className="min-w-0 flex-1 p-4">
           <div className="flex items-center gap-1.5 text-meta text-ink-3">
             <Globe className="size-3.5" />
-            <span className="truncate">{provider ?? new URL(url).hostname}</span>
+            <span className="truncate">{provider ?? (url ? new URL(url).hostname : '')}</span>
           </div>
-          <p className="mt-1 line-clamp-2 font-semibold text-ink">{title ?? url}</p>
+          <p className="mt-1 line-clamp-2 font-semibold text-ink">{title ?? rawUrl}</p>
           {description && <p className="mt-1 line-clamp-2 text-meta text-ink-2">{description}</p>}
         </div>
         {thumbnailUrl ? (

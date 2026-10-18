@@ -6,12 +6,16 @@ import { CronJob } from 'cron';
 import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { EntraClientService, GRAPH } from '../directory/entra-client.service';
-import { EntraRedirectService } from '../directory/entra-redirect.service';
+import { validTenantId } from '../auth/entra-auth.service';
+import { ENTRA_CALLBACK_PATH, EntraRedirectService, redirectAllowed } from '../directory/entra-redirect.service';
 import { LdapService } from '../directory/ldap.service';
 import { EmailService } from '../email/email.service';
 import { EMAIL_PREVIEWS, previewHtml } from '../email/previews';
 import { EntraProvisionerService } from './entra-provisioner.service';
+import { storedSecretFor } from './secret-box';
 import { SettingsService } from './settings.service';
+
+const RETYPE = (what: string) => new BadRequestException(`The connection details changed, so the saved ${what} can't be used for this test. Type the ${what} again.`);
 
 class GeneralDto {
   @IsOptional() @IsBoolean() allowLocalSignup?: boolean;
@@ -69,6 +73,27 @@ class LdapDto {
   @IsString() @MaxLength(1000) groupFilter: string;
   @Type(() => Boolean) @IsBoolean() tlsRejectUnauthorized: boolean;
   @IsString() @MaxLength(100) syncCron: string;
+}
+
+/**
+ * Single-tenant only (a GUID or verified domain — never common/organizations/consumers, which would let
+ * any Microsoft account sign in), and a pinned redirect URI must be our callback over HTTPS.
+ */
+export function assertEntraTarget(dto: Pick<EntraDto, 'enabled' | 'tenantId' | 'redirectUri'>) {
+  if ((dto.enabled || dto.tenantId.trim()) && !validTenantId(dto.tenantId)) {
+    throw new BadRequestException('Enter your directory (tenant) ID or its domain, e.g. contoso.onmicrosoft.com — "common" and "organizations" are not allowed.');
+  }
+  if (dto.redirectUri.trim()) {
+    let url: URL | null = null;
+    try {
+      url = new URL(dto.redirectUri.trim());
+    } catch {
+      /* reported below */
+    }
+    if (!url || !redirectAllowed(url.toString()) || url.pathname !== ENTRA_CALLBACK_PATH || url.search || url.hash) {
+      throw new BadRequestException(`The redirect URI must be https://<your Trigon address>${ENTRA_CALLBACK_PATH}`);
+    }
+  }
 }
 
 function assertCron(expr: string) {
@@ -160,6 +185,7 @@ export class SettingsController {
   @Put('entra')
   async entra(@CurrentUser() user: AuthUser, @Body() dto: EntraDto) {
     assertCron(dto.syncCron);
+    assertEntraTarget(dto);
     await this.settings.update('entra', dto as Partial<EntraSettings>, user.id);
     this.recordSave(user.id, 'Microsoft Entra ID', dto);
     return this.settings.getPublic('entra');
@@ -245,7 +271,9 @@ export class SettingsController {
   @HttpCode(200)
   async testEntra(@Body() dto: EntraDto) {
     const stored = await this.settings.get('entra');
-    const s = { ...dto, clientSecret: dto.clientSecret || stored.clientSecret };
+    const clientSecret = storedSecretFor<Partial<EntraSettings>>(dto as Partial<EntraSettings>, stored, 'clientSecret', ['tenantId', 'clientId']);
+    if (clientSecret === null) throw RETYPE('client secret');
+    const s = { ...dto, clientSecret };
     if (!s.tenantId || !s.clientId || !s.clientSecret) throw new BadRequestException('Tenant ID, client ID and secret are required');
     try {
       const token = await EntraClientService.appToken(EntraClientService.build(s));
@@ -263,8 +291,10 @@ export class SettingsController {
   @HttpCode(200)
   async testLdap(@Body() dto: LdapDto) {
     const stored = await this.settings.get('ldap');
+    const bindPassword = storedSecretFor<Partial<LdapSettings>>(dto as Partial<LdapSettings>, stored, 'bindPassword', ['url', 'bindDn', 'tlsRejectUnauthorized']);
+    if (bindPassword === null) throw RETYPE('bind password');
     try {
-      const r = await this.ldap.test({ ...dto, bindPassword: dto.bindPassword || stored.bindPassword } as LdapSettings);
+      const r = await this.ldap.test({ ...dto, bindPassword } as LdapSettings);
       return { ok: true, message: `Connected. Found ${r.users} users and ${r.groups} groups with the current filters.` };
     } catch (err) {
       return { ok: false, message: (err as Error).message };

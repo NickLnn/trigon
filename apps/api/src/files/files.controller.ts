@@ -25,6 +25,7 @@ import { Database, InjectDb } from '../db/db.module';
 import { attachments, documents } from '../db/schema';
 import { PermissionsService } from '../permissions/permissions.service';
 import { TextIndexService } from '../search/text-index.service';
+import { fileResponseHeaders } from './serve-policy';
 import { StorageService } from './storage.service';
 
 const MAX_BYTES = Number(process.env.MAX_UPLOAD_MB ?? 50) * 1024 * 1024;
@@ -118,12 +119,8 @@ export class FilesController {
     if (!doc?.storageKey) throw new NotFoundException();
     // Open the blob first: a missing one is a plain 404, without the file's headers.
     const body = await this.storage.stream(doc.storageKey).catch(() => Promise.reject(new NotFoundException()));
-    res.set({
-      'Content-Type': doc.mimeType ?? 'application/octet-stream',
-      'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(doc.title)}`,
-      'Cache-Control': 'private, max-age=300',
-      'X-Content-Type-Options': 'nosniff',
-    });
+    // Never let an uploaded file run as a page or script in Trigon's origin (see fileResponseHeaders).
+    res.set({ ...fileResponseHeaders(doc.mimeType, doc.title), 'Cache-Control': 'private, max-age=300' });
     return new StreamableFile(body);
   }
 
@@ -150,7 +147,7 @@ export class FilesController {
   /** Upload an image pasted into a page. */
   @Post('attachments')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BYTES } }))
-  async uploadAttachment(@CurrentUser() user: AuthUser, @Body('documentId') documentId: string, @UploadedFile() file?: Express.Multer.File) {
+  async uploadAttachment(@CurrentUser() user: AuthUser, @Body('documentId', ParseUUIDPipe) documentId: string, @UploadedFile() file?: Express.Multer.File) {
     if (!file) throw new BadRequestException('file is required');
     if (!IMAGE_TYPES.test(file.mimetype)) throw new BadRequestException('Only images can be attached inline');
     await this.perms.assertDocument(user, documentId, 'edit');

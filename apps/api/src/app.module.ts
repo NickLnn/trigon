@@ -2,13 +2,15 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ActivityModule } from './activity/activity.module';
 import { BackupsModule } from './backups/backups.module';
 import { AuthModule } from './auth/auth.module';
 import { CollabModule } from './collab/collab.module';
 import { CommentsModule } from './comments/comments.module';
+import { validateEnv } from './common/env';
 import { JwtAuthGuard, RolesGuard } from './common/guards';
+import { ClientThrottlerGuard } from './common/throttler.guard';
 import { DbModule } from './db/db.module';
 import { DirectoryModule } from './directory/directory.module';
 import { DocumentsModule } from './documents/documents.module';
@@ -27,7 +29,7 @@ import { UsersModule } from './users/users.module';
 @Module({
   imports: [
     // .env in apps/api, falling back to the monorepo root
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'], validate: validateEnv }),
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     DbModule,
@@ -52,7 +54,7 @@ import { UsersModule } from './users/users.module';
   ],
   controllers: [HealthController],
   providers: [
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: ClientThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],

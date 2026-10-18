@@ -1,11 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { BackupSettings, EmailSettings, EntraSettings, GeneralSettings, LdapSettings, SearchSettings } from '@trigon/shared';
 import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { Database, InjectDb } from '../db/db.module';
 import { settings } from '../db/schema';
+import { maskSecrets, SecretBox } from './secret-box';
 
 export interface SettingsMap {
   general: GeneralSettings;
@@ -17,8 +17,8 @@ export interface SettingsMap {
 }
 export type SettingsKey = keyof SettingsMap;
 
-/** Fields encrypted at rest. */
-const SECRET_FIELDS: { [K in SettingsKey]: (keyof SettingsMap[K])[] } = {
+/** Fields encrypted at rest and never sent to the browser. */
+export const SECRET_FIELDS: { [K in SettingsKey]: (keyof SettingsMap[K])[] } = {
   general: [],
   entra: ['clientSecret'],
   ldap: ['bindPassword'],
@@ -29,14 +29,15 @@ const SECRET_FIELDS: { [K in SettingsKey]: (keyof SettingsMap[K])[] } = {
 
 /**
  * Admin-editable configuration stored in Postgres, falling back to environment variables until an
- * admin saves a section in the UI. Secrets are AES-256-GCM encrypted with a key derived from
- * JWT_ACCESS_SECRET (or SETTINGS_ENCRYPTION_KEY when set).
+ * admin saves a section in the UI. Secrets are AES-256-GCM encrypted (see SecretBox) with a key derived
+ * from SETTINGS_ENCRYPTION_KEY, or from JWT_ACCESS_SECRET on installs that don't set one yet.
+ * SETTINGS_ENCRYPTION_KEY_PREVIOUS lets the key be rotated: values are re-encrypted on start-up.
  */
 @Injectable()
-export class SettingsService {
+export class SettingsService implements OnModuleInit {
   private readonly logger = new Logger(SettingsService.name);
   private cache = new Map<SettingsKey, unknown>();
-  private readonly key: Buffer;
+  private readonly box: SecretBox;
   /** Emits the section key whenever a section is saved. */
   readonly changes = new EventEmitter();
 
@@ -44,28 +45,45 @@ export class SettingsService {
     @InjectDb() private readonly db: Database,
     private readonly config: ConfigService,
   ) {
-    const material = config.get<string>('SETTINGS_ENCRYPTION_KEY') || config.getOrThrow<string>('JWT_ACCESS_SECRET');
-    this.key = createHash('sha256').update(`trigon-settings:${material}`).digest();
+    const dedicated = config.get<string>('SETTINGS_ENCRYPTION_KEY');
+    const jwt = config.getOrThrow<string>('JWT_ACCESS_SECRET');
+    const previous = [config.get<string>('SETTINGS_ENCRYPTION_KEY_PREVIOUS') ?? '', ...(dedicated ? [jwt] : [])];
+    this.box = new SecretBox(dedicated || jwt, previous);
+    if (!dedicated) {
+      this.logger.warn('SETTINGS_ENCRYPTION_KEY is not set: stored secrets are encrypted with a key derived from JWT_ACCESS_SECRET. Set a separate key (stored secrets are re-encrypted automatically).');
+    }
   }
 
-  private encrypt(plain: string): string {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv);
-    const data = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
-    return `enc:v1:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${data.toString('base64')}`;
+  /** Re-encrypt stored secrets that are plain text, in the old format or under a previous key. */
+  async onModuleInit() {
+    const rows = await this.db.select().from(settings);
+    for (const row of rows) {
+      const key = row.key as SettingsKey;
+      const fields = (SECRET_FIELDS[key] ?? []) as string[];
+      const value = (row.value ?? {}) as Record<string, unknown>;
+      const stale = fields.filter((f) => typeof value[f] === 'string' && this.box.needsReencrypt(value[f] as string));
+      if (!stale.length) continue;
+      const next = { ...value };
+      for (const f of stale) {
+        const plain = this.box.decrypt(value[f] as string);
+        if (plain === null) {
+          this.logger.error(`Could not decrypt the stored ${key}.${f} with any configured key; re-enter it in Settings.`);
+          continue;
+        }
+        next[f] = plain ? this.box.encrypt(plain) : '';
+      }
+      await this.db.update(settings).set({ value: next }).where(eq(settings.key, key));
+      this.logger.log(`Re-encrypted stored secrets in "${key}" with the current key.`);
+    }
   }
 
   private decrypt(value: string): string {
-    if (!value.startsWith('enc:v1:')) return value;
-    try {
-      const [, , iv, tag, data] = value.split(':');
-      const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv, 'base64'));
-      decipher.setAuthTag(Buffer.from(tag, 'base64'));
-      return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8');
-    } catch {
-      this.logger.error('Could not decrypt a stored secret — was JWT_ACCESS_SECRET changed? Re-enter it in Settings.');
+    const plain = this.box.decrypt(value);
+    if (plain === null) {
+      this.logger.error('Could not decrypt a stored secret — was the encryption key changed? Re-enter it in Settings.');
       return '';
     }
+    return plain;
   }
 
   private defaults(): SettingsMap {
@@ -156,12 +174,7 @@ export class SettingsService {
 
   /** Section safe to send to the browser: secrets replaced by has* flags. */
   async getPublic<K extends SettingsKey>(key: K): Promise<SettingsMap[K]> {
-    const full = { ...(await this.get(key)) } as unknown as Record<string, unknown>;
-    for (const f of SECRET_FIELDS[key] as string[]) {
-      full[`has${f[0].toUpperCase()}${f.slice(1)}`] = !!full[f];
-      delete full[f];
-    }
-    return full as unknown as SettingsMap[K];
+    return maskSecrets(await this.get(key), SECRET_FIELDS[key] as string[]);
   }
 
   /**
@@ -180,7 +193,7 @@ export class SettingsService {
 
     const stored = { ...next };
     for (const f of SECRET_FIELDS[key] as string[]) {
-      if (typeof stored[f] === 'string' && stored[f]) stored[f] = this.encrypt(stored[f] as string);
+      if (typeof stored[f] === 'string' && stored[f]) stored[f] = this.box.encrypt(stored[f] as string);
     }
     await this.db
       .insert(settings)

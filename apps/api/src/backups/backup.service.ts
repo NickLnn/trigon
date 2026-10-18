@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { ActivityService } from '../activity/activity.service';
 import { StorageService } from '../files/storage.service';
 import { SettingsService } from '../settings/settings.service';
-import { BACKUP_NAME, destinationFor, nfsCompose, normalizeSmb, run, selectedDestinations, type Destination } from './destinations';
+import { storedSecretFor } from '../settings/secret-box';
+import { BACKUP_NAME, destinationFor, nfsCompose, normalizeSmb, run, selectedDestinations, smbProblem, type Destination } from './destinations';
 
 const JOB = 'trigon-backup';
 const FORMAT = 1;
@@ -136,18 +137,27 @@ export class BackupService implements OnModuleInit {
   }
 
   async save(form: BackupSettings, userId: string) {
+    const problem = form.destinations.includes('smb') ? smbProblem(form) : null;
+    if (problem) throw new BadRequestException(problem);
     const next: Partial<BackupSettings> & { destination?: undefined } = { ...(form.destinations.includes('smb') ? normalizeSmb(form) : form), destination: undefined };
     await this.settings.update('backup', next, userId);
   }
 
-  /** Check the destinations on the form before saving (empty secrets use the stored ones). */
+  /**
+   * Check the destinations on the form before saving. An empty password uses the stored one, but only
+   * for the saved server, share and user — never to send it to another server.
+   */
   async test(form: BackupSettings) {
     const stored = await this.settings.get('backup');
-    const merged: BackupSettings = {
-      ...stored,
-      ...form,
-      smbPassword: form.smbPassword || stored.smbPassword,
-    };
+    if (form.destinations.includes('smb')) {
+      const problem = smbProblem(form);
+      if (problem) return { ok: false, message: problem };
+    }
+    const smbPassword = storedSecretFor(normalizeSmb({ ...stored, ...form }), stored, 'smbPassword', ['smbHost', 'smbShare', 'smbUser', 'smbDomain']);
+    if (smbPassword === null) {
+      return { ok: false, message: 'SMB: the server, share or user changed, so the saved password can’t be used for this test. Type the password again.' };
+    }
+    const merged: BackupSettings = { ...stored, ...form, smbPassword };
     const results = await Promise.all((await this.targets(merged)).map((t) => this.status(t.key, t.dest)));
     const bad = results.filter((r) => !r.ok);
     if (!results.length) return { ok: false, message: 'Choose at least one destination.' };

@@ -5,6 +5,8 @@ import {
   ForbiddenException,
   Get,
   HttpCode,
+  HttpException,
+  Logger,
   Post,
   Query,
   Req,
@@ -25,7 +27,7 @@ import { CurrentUser, Public, type AuthUser } from '../common/decorators';
 import { EntraRedirectService, redirectAllowed } from '../directory/entra-redirect.service';
 import { LdapService } from '../directory/ldap.service';
 import { SettingsService } from '../settings/settings.service';
-import { IdentityService } from '../users/identity.service';
+import { IdentityLinkRefused, IdentityService } from '../users/identity.service';
 import { EntraAuthService, type EntraLoginState } from './entra-auth.service';
 import { TokensService } from './tokens.service';
 
@@ -51,6 +53,8 @@ const safeReturnTo = (v: unknown) => (typeof v === 'string' && /^\/(?!\/)/.test(
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly tokens: TokensService,
     private readonly identity: IdentityService,
@@ -116,6 +120,7 @@ export class AuthController {
 
   /** Step 1 of Microsoft sign-in: redirect to the Entra authorize endpoint. */
   @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Get('entra/login')
   async entraLogin(@Query('returnTo') returnTo: string, @Req() req: Request, @Res() res: Response) {
     const { redirectUri, origin } = await this.redirects.forRequest(req);
@@ -138,33 +143,45 @@ export class AuthController {
 
   /** Step 2: Entra redirects back with ?code&state. */
   @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Get('entra/callback')
   async entraCallback(@Query() q: Record<string, string>, @Req() req: Request, @Res() res: Response) {
     let login: EntraLoginState | undefined;
     try {
       login = await this.jwt.verifyAsync<EntraLoginState>(req.cookies?.[OIDC_COOKIE] ?? '');
+      if (login?.typ !== 'oidc') login = undefined;
     } catch {
       login = undefined;
     }
     res.clearCookie(OIDC_COOKIE, { path: '/' });
     // The signed state names the (trusted) address the sign-in started from.
     const base = login?.origin ?? new URL(await this.settings.publicUrl()).origin;
-    if (q.error) return res.redirect(`${base}/login?error=${encodeURIComponent(q.error_description ?? q.error)}`);
+    if (q.error) {
+      this.logger.warn(`Microsoft sign-in returned ${q.error}: ${String(q.error_description ?? '').slice(0, 500)}`);
+      const shown = q.error === 'access_denied' ? 'Sign in with Microsoft was cancelled or not allowed.' : 'Microsoft could not sign you in. Try again, or ask an administrator.';
+      return res.redirect(`${base}/login?error=${encodeURIComponent(shown)}`);
+    }
 
     try {
-      const user = await this.entra.complete(q.code, q.state, login);
+      // Signed in already (e.g. with a password)? Then this Microsoft account may be linked to that account.
+      const user = await this.entra.complete(q.code, q.state, login, await this.tokens.sessionUserId(req));
       if (!user.active) throw new UnauthorizedException('Account disabled');
       await this.tokens.issueSession(res, user, req.headers['user-agent']);
       await this.identity.touchLogin(user.id);
       this.activity.record({ action: 'user.signed_in', actorId: user.id, details: { method: 'Microsoft' } });
       res.redirect(`${base}${safeReturnTo(login?.returnTo)}`);
     } catch (err) {
-      this.activity.record({ action: 'user.sign_in_failed', actorId: null, actorName: 'Microsoft sign-in', details: { method: 'Microsoft', reason: (err as Error).message } });
-      res.redirect(`${base}/login?error=${encodeURIComponent((err as Error).message)}`);
+      const reason = (err as Error).message;
+      this.activity.record({ action: 'user.sign_in_failed', actorId: null, actorName: 'Microsoft sign-in', details: { method: 'Microsoft', reason: reason.slice(0, 500) } });
+      // Our own messages are meant for people; library and network errors stay in the log.
+      const shown = err instanceof HttpException || err instanceof IdentityLinkRefused ? reason : 'Sign in with Microsoft failed. Try again, or ask an administrator.';
+      if (shown !== reason) this.logger.warn(`Microsoft sign-in failed: ${reason}`);
+      res.redirect(`${base}/login?error=${encodeURIComponent(shown)}`);
     }
   }
 
   @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('refresh')
   @HttpCode(200)
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
@@ -173,6 +190,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('logout')
   @HttpCode(204)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
@@ -189,6 +207,7 @@ export class AuthController {
   }
 
   /** Short-lived token for the Yjs collaboration WebSocket. */
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get('collab-token')
   async collabToken(@CurrentUser() user: AuthUser) {
     return { token: await this.tokens.signCollab(user) };

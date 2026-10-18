@@ -6,7 +6,7 @@ import { and, count, eq, inArray, isNull, max, ne, notInArray, sql } from 'drizz
 import { Database, InjectDb } from '../db/db.module';
 import { accounts, groupMembers, groups, refreshTokens, users } from '../db/schema';
 import { SettingsService } from '../settings/settings.service';
-import { IdentityService } from '../users/identity.service';
+import { IdentityLinkRefused, IdentityService, type ExternalIdentity } from '../users/identity.service';
 import { EntraClientService } from './entra-client.service';
 import { LdapService } from './ldap.service';
 
@@ -162,8 +162,22 @@ export class DirectorySyncService implements OnModuleInit {
     return ids.length;
   }
 
+  /**
+   * Upsert a synced person; null when their e-mail matches a protected Trigon account (an admin, or someone
+   * with a local password) that a directory attribute alone may not take over — they are skipped.
+   */
+  private async upsert(identity: ExternalIdentity): Promise<string | null> {
+    try {
+      return (await this.identity.upsertExternal(identity)).id;
+    } catch (err) {
+      if (!(err instanceof IdentityLinkRefused)) throw err;
+      this.logger.warn(`Skipped ${identity.provider} user ${identity.email}: the Trigon account with that e-mail must link it by signing in.`);
+      return null;
+    }
+  }
+
   private async upsertGraphUser(gu: GraphUser) {
-    const user = await this.identity.upsertExternal({
+    return this.upsert({
       provider: 'entra',
       providerAccountId: gu.id,
       email: gu.mail ?? gu.userPrincipalName,
@@ -173,7 +187,6 @@ export class DirectorySyncService implements OnModuleInit {
       active: gu.accountEnabled,
       profile: { ...gu },
     });
-    return user.id;
   }
 
   private async syncEntra(): Promise<SyncResult> {
@@ -193,7 +206,11 @@ export class DirectorySyncService implements OnModuleInit {
         const userIds: string[] = [];
         for (const m of members) {
           if (!m.userPrincipalName) continue;
-          if (!byExternal.has(m.id)) byExternal.set(m.id, await this.upsertGraphUser(m as GraphUser));
+          if (!byExternal.has(m.id)) {
+            const id = await this.upsertGraphUser(m as GraphUser);
+            if (!id) continue;
+            byExternal.set(m.id, id);
+          }
           userIds.push(byExternal.get(m.id)!);
         }
         await this.setMembers(await this.upsertGroup('entra', gg.id, gg.displayName, gg.description), userIds);
@@ -205,11 +222,13 @@ export class DirectorySyncService implements OnModuleInit {
       for (const pick of cfg.syncUsers) {
         if (byExternal.has(pick.id)) continue;
         const gu = await this.entra.graphGet<GraphUser>(`/users/${pick.id}?$select=${USER_SELECT}`);
-        if (gu) byExternal.set(gu.id, await this.upsertGraphUser(gu));
+        const id = gu ? await this.upsertGraphUser(gu) : null;
+        if (gu && id) byExternal.set(gu.id, id);
       }
     } else {
       for (const gu of await this.entra.graphList<GraphUser>(`/users?$select=${USER_SELECT}&$top=999`)) {
-        byExternal.set(gu.id, await this.upsertGraphUser(gu));
+        const id = await this.upsertGraphUser(gu);
+        if (id) byExternal.set(gu.id, id);
       }
       const graphGroups = await this.entra.graphList<GraphGroup>('/groups?$select=id,displayName,description&$top=999');
       for (const gg of graphGroups) {
@@ -236,7 +255,7 @@ export class DirectorySyncService implements OnModuleInit {
     const ldapUsers = await this.ldap.listUsers();
     const byDn = new Map<string, string>();
     for (const lu of ldapUsers) {
-      const user = await this.identity.upsertExternal({
+      const userId = await this.upsert({
         provider: 'ldap',
         providerAccountId: lu.externalId,
         email: lu.email,
@@ -246,7 +265,7 @@ export class DirectorySyncService implements OnModuleInit {
         active: !lu.disabled,
         profile: { dn: lu.dn, username: lu.username },
       });
-      byDn.set(lu.dn.toLowerCase(), user.id);
+      if (userId) byDn.set(lu.dn.toLowerCase(), userId);
     }
 
     const ldapGroups = await this.ldap.listGroups();

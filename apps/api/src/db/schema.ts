@@ -59,6 +59,11 @@ export const users = pgTable(
     role: systemRole('role').notNull().default('editor'),
     /** False when the directory reports the account as disabled/removed. */
     active: boolean('active').notNull().default(true),
+    /**
+     * Turned off by a Trigon administrator. Directory sync and directory sign-in never re-enable such an
+     * account (only an admin can), whatever the directory says.
+     */
+    disabledByAdmin: boolean('disabled_by_admin').notNull().default(false),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
     /** Email notification choices (Profile → Notifications); missing keys use the defaults. */
     notificationPrefs: jsonb('notification_prefs').$type<Partial<NotificationPrefs>>().notNull().default(sql`'{}'::jsonb`),

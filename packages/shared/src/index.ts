@@ -155,6 +155,8 @@ export const ACTIVITY_ACTIONS = {
   'space.deleted': { category: 'spaces', label: 'Deleted space' },
   'user.signed_in': { category: 'access', label: 'Signed in' },
   'user.sign_in_failed': { category: 'access', label: 'Failed sign-in' },
+  'user.locked': { category: 'access', label: 'Sign-in paused after failed attempts' },
+  'user.identity_linked': { category: 'access', label: 'Linked a sign-in method' },
   'user.created': { category: 'admin', label: 'Created user' },
   'user.updated': { category: 'admin', label: 'Changed user' },
   'user.password_set': { category: 'admin', label: 'Set password' },
