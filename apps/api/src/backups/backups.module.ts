@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
+import { FilesModule } from '../files/files.module';
 import { BackupsController } from './backups.controller';
 import { BackupService } from './backup.service';
 
-@Module({ controllers: [BackupsController], providers: [BackupService] })
+@Module({ imports: [FilesModule], controllers: [BackupsController], providers: [BackupService] })
 export class BackupsModule {}

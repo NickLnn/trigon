@@ -178,6 +178,15 @@ export default function BackupsSettingsPage() {
   return (
     <div className="space-y-5">
       {restarting && <RestartWatcher />}
+      {data.filesIncluded === false && (
+        <div className="rounded-card bg-warning/12 p-4 text-sm">
+          <p className="font-semibold">Uploaded files are kept in S3, so backups hold the database only.</p>
+          <p className="mt-1 text-ink-2">
+            Protect the files on the S3 side: turn on versioning (and ideally replication or object lock) for the bucket. Restoring a backup brings back
+            pages, settings and history; the files stay in the bucket.
+          </p>
+        </div>
+      )}
 
       <SettingsCard
         title="Status"

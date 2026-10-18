@@ -158,6 +158,12 @@ export class S3Store implements BlobStore {
     await this.call('DELETE', this.url(key), undefined, [404]);
   }
 
+  /** Size of a stored blob, or null if it isn't there. */
+  async head(key: string): Promise<number | null> {
+    const res = await this.call('HEAD', this.url(key), undefined, [404]);
+    return res.status === 404 ? null : Number(res.headers.get('content-length') ?? 0);
+  }
+
   async *list() {
     let token: string | undefined;
     do {

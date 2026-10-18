@@ -557,6 +557,8 @@ export interface BackupOverview {
   destinations: BackupDestinationStatus[];
   /** docker-compose lines for an NFS destination (filled from nfsServer / nfsExport). */
   nfsCompose: string;
+  /** Backups contain the uploaded files (false when files are kept in S3: then they hold the database only). */
+  filesIncluded: boolean;
 }
 
 export interface LdapSettings {

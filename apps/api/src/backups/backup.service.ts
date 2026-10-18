@@ -2,10 +2,11 @@ import { BadRequestException, ConflictException, Injectable, Logger, OnModuleIni
 import { SchedulerRegistry } from '@nestjs/schedule';
 import type { BackupDestination, BackupDestinationStatus, BackupFile, BackupOverview, BackupRunResult, BackupSettings } from '@trigon/shared';
 import { CronJob } from 'cron';
-import { cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { ActivityService } from '../activity/activity.service';
+import { StorageService } from '../files/storage.service';
 import { SettingsService } from '../settings/settings.service';
 import { BACKUP_NAME, destinationFor, nfsCompose, normalizeSmb, run, selectedDestinations, type Destination } from './destinations';
 
@@ -53,6 +54,7 @@ export class BackupService implements OnModuleInit {
     private readonly settings: SettingsService,
     private readonly scheduler: SchedulerRegistry,
     private readonly activity: ActivityService,
+    private readonly storage: StorageService,
   ) {
     settings.changes.on('changed', (key) => key === 'backup' && void this.schedule());
   }
@@ -83,10 +85,6 @@ export class BackupService implements OnModuleInit {
 
   private step(step: string) {
     if (this.running) this.running = { ...this.running, step };
-  }
-
-  private storageDir() {
-    return resolve(process.env.STORAGE_DIR ?? './storage');
   }
 
   private async targets(s?: BackupSettings): Promise<{ key: BackupDestination; dest: Destination }[]> {
@@ -133,6 +131,7 @@ export class BackupService implements OnModuleInit {
       files,
       destinations,
       nfsCompose: nfsCompose(s.nfsServer, s.nfsExport),
+      filesIncluded: !!this.storage.localRoot(),
     };
   }
 
@@ -186,12 +185,19 @@ export class BackupService implements OnModuleInit {
       if (!targets.length) throw new Error('No backup destination is selected.');
       this.step('Exporting the database');
       await run(bin.pgDump(), ['--format=custom', '--no-owner', '--no-privileges', '--file', join(work, 'database.dump'), '--dbname', database()]);
-      await writeFile(join(work, 'manifest.json'), JSON.stringify({ format: FORMAT, app: 'trigon', createdAt: started.toISOString(), trigger }, null, 2));
-      await mkdir(this.storageDir(), { recursive: true });
-      await symlink(this.storageDir(), join(work, 'storage'), process.platform === 'win32' ? 'junction' : 'dir');
-      this.step('Packing database and files');
+      // Files on this server are packed too; files in S3 stay there (protect the bucket with versioning).
+      const root = this.storage.localRoot();
+      await writeFile(
+        join(work, 'manifest.json'),
+        JSON.stringify({ format: FORMAT, app: 'trigon', createdAt: started.toISOString(), trigger, files: root ? 'included' : 's3' }, null, 2),
+      );
+      if (root) {
+        await mkdir(root, { recursive: true });
+        await symlink(root, join(work, 'storage'), process.platform === 'win32' ? 'junction' : 'dir');
+      }
+      this.step(root ? 'Packing database and files' : 'Packing the database');
       const archive = join(work, name);
-      await run(bin.tar(), ['-czhf', archive, '-C', work, 'manifest.json', 'database.dump', 'storage']);
+      await run(bin.tar(), ['-czhf', archive, '-C', work, 'manifest.json', 'database.dump', ...(root ? ['storage'] : [])]);
       const sizeBytes = (await stat(archive)).size;
 
       const saved: string[] = [];
@@ -307,10 +313,8 @@ export class BackupService implements OnModuleInit {
       this.step('Restoring the database');
       await run(bin.pgRestore(), ['--clean', '--if-exists', '--no-owner', '--no-privileges', '--single-transaction', '--dbname', database(), join(work, 'database.dump')]);
       this.step('Restoring files');
-      await mkdir(this.storageDir(), { recursive: true });
-      await cp(join(work, 'storage'), this.storageDir(), { recursive: true, force: true }).catch((err: NodeJS.ErrnoException) => {
-        if (err.code !== 'ENOENT') throw err;
-      });
+      // Back into wherever files are kept now (this server or S3). A backup made while files were in S3 has none.
+      if (await stat(join(work, 'storage')).then((s) => s.isDirectory(), () => false)) await this.storage.importDir(join(work, 'storage'));
       // The restored database carries the backup settings of that day; keep today's.
       const { lastRun: _old, ...keep } = current;
       await this.settings.update('backup', { ...keep, lastRun: { ok: true, at: new Date().toISOString(), durationMs: 0, file: name, sizeBytes: null, message: `Restored ${name}.`, trigger: 'manual' } });
