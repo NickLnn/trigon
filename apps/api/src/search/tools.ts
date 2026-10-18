@@ -84,9 +84,15 @@ export async function pdfPages(path: string): Promise<string[]> {
   return pages;
 }
 
+/** Tesseract language codes (eng, chi_sim…), joined with "+"; anything else is dropped (it becomes one argv entry). */
+export function langArg(langs: string[]): string {
+  const ok = langs.filter((l) => /^[a-z]{3}(_[a-z]{3,4})?$/i.test(l)).slice(0, 8);
+  return (ok.length ? ok : ['eng']).join('+');
+}
+
 /** OCR an image file. */
 export async function ocrImage(path: string, langs: string[]): Promise<string> {
-  return run('tesseract', [path, 'stdout', '--tessdata-dir', await tessdataDir(), '-l', langs.join('+')], { OMP_THREAD_LIMIT: '1' });
+  return run('tesseract', [path, 'stdout', '--tessdata-dir', await tessdataDir(), '-l', langArg(langs)], { OMP_THREAD_LIMIT: '1' });
 }
 
 /** OCR the given (1-based) pages of a PDF, rendering one page at a time to a temporary image. */
@@ -97,8 +103,9 @@ export async function ocrPdfPages(path: string, pages: number[], langs: string[]
   try {
     for (const page of pages) {
       const prefix = join(tmp, 'page');
+      if (!Number.isInteger(page) || page < 1) continue;
       await run('pdftoppm', ['-r', '200', '-gray', '-png', '-singlefile', '-f', String(page), '-l', String(page), path, prefix]);
-      result.set(page, await run('tesseract', [`${prefix}.png`, 'stdout', '--tessdata-dir', dir, '-l', langs.join('+')], { OMP_THREAD_LIMIT: '1' }));
+      result.set(page, await run('tesseract', [`${prefix}.png`, 'stdout', '--tessdata-dir', dir, '-l', langArg(langs)], { OMP_THREAD_LIMIT: '1' }));
       await rm(`${prefix}.png`, { force: true });
     }
   } finally {

@@ -12,7 +12,7 @@ const ACTIVE = /(html|javascript|ecmascript|^text\/xml$|^application\/xml$|\+xml
  *    downloaded, not rendered, when opened directly;
  *  - only PDFs, raster images, audio/video and plain text are shown inline; everything else downloads;
  *  - a sandbox CSP (no scripts, no same-origin) applies to everything except PDFs, whose built-in browser
- *    viewer a sandbox would block.
+ *    viewer a sandbox (or the API's default-src 'none') would block.
  */
 export function fileResponseHeaders(mimeType: string | null | undefined, fileName: string): Record<string, string> {
   const mime = (mimeType ?? '').split(';')[0].trim().toLowerCase() || 'application/octet-stream';
@@ -24,6 +24,8 @@ export function fileResponseHeaders(mimeType: string | null | undefined, fileNam
     'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(fileName)}`,
     'X-Content-Type-Options': 'nosniff',
     'Cross-Origin-Resource-Policy': 'same-origin',
-    ...(type === 'application/pdf' ? {} : { 'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox" }),
+    // PDFs get a policy of their own (replacing the API default) that leaves the browser's PDF viewer working.
+    'Content-Security-Policy':
+      type === 'application/pdf' ? "frame-ancestors 'self'" : "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox",
   };
 }

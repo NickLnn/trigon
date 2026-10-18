@@ -26,6 +26,7 @@ import { attachments, documents } from '../db/schema';
 import { PermissionsService } from '../permissions/permissions.service';
 import { TextIndexService } from '../search/text-index.service';
 import { fileResponseHeaders } from './serve-policy';
+import { sniffImage } from './sniff';
 import { StorageService } from './storage.service';
 
 const MAX_BYTES = Number(process.env.MAX_UPLOAD_MB ?? 50) * 1024 * 1024;
@@ -149,9 +150,11 @@ export class FilesController {
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BYTES } }))
   async uploadAttachment(@CurrentUser() user: AuthUser, @Body('documentId', ParseUUIDPipe) documentId: string, @UploadedFile() file?: Express.Multer.File) {
     if (!file) throw new BadRequestException('file is required');
-    if (!IMAGE_TYPES.test(file.mimetype)) throw new BadRequestException('Only images can be attached inline');
     await this.perms.assertDocument(user, documentId, 'edit');
-    return this.saveAttachment(user, documentId, file.buffer, file.mimetype, file.originalname, null);
+    // The stored type is what the bytes are, not what the browser claimed.
+    const mime = sniffImage(file.buffer);
+    if (!mime || !IMAGE_TYPES.test(mime)) throw new BadRequestException('Only images can be attached inline');
+    return this.saveAttachment(user, documentId, file.buffer, mime, file.originalname, null);
   }
 
   /**
@@ -162,8 +165,8 @@ export class FilesController {
   async importImage(@CurrentUser() user: AuthUser, @Body() dto: ImportImageDto) {
     await this.perms.assertDocument(user, dto.documentId, 'edit');
     const { buffer, contentType } = await safeFetch(dto.url, { maxBytes: 15 * 1024 * 1024, accept: 'image/*' });
-    const mime = contentType.split(';')[0].trim().toLowerCase();
-    if (!IMAGE_TYPES.test(mime)) throw new BadRequestException(`Not an image (${mime})`);
+    const mime = sniffImage(buffer);
+    if (!mime || !IMAGE_TYPES.test(mime)) throw new BadRequestException(`Not an image (${contentType.split(';')[0].trim()})`);
     return this.saveAttachment(user, dto.documentId, buffer, mime, null, dto.url);
   }
 

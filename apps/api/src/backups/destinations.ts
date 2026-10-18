@@ -33,10 +33,12 @@ export function run(cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv
   const [program, ...prefix] = cmd.split(' | ');
   return new Promise((ok, fail) => {
     const child = spawn(program, [...prefix, ...args], { env: opts.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    // Keep only the last 1 MB of output: enough for errors and listings, never unbounded memory.
+    const cap = (s: string) => (s.length > 1_000_000 ? s.slice(-1_000_000) : s);
     let out = '';
     let err = '';
-    child.stdout.on('data', (d) => (out += d));
-    child.stderr.on('data', (d) => (err += d));
+    child.stdout.on('data', (d) => (out = cap(out + d)));
+    child.stderr.on('data', (d) => (err = cap(err + d)));
     const timer = setTimeout(() => child.kill('SIGKILL'), opts.timeoutMs ?? 30 * 60_000);
     child.on('error', (e) => {
       clearTimeout(timer);

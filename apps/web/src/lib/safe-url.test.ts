@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { embedTarget, webUrl } from './safe-url';
+import { embedTarget, safeHref, safeImageSrc, webUrl } from './safe-url';
 
 test('only absolute http(s) URLs are used for links and thumbnails', () => {
   assert.equal(webUrl('https://example.com/a?b=1'), 'https://example.com/a?b=1');
@@ -17,4 +17,18 @@ test('embed players come from the allow-listed providers, never from stored attr
     assert.equal(embedTarget(url).embedUrl, null, url);
   }
   assert.equal(embedTarget('javascript:alert(1)').url, null);
+});
+
+test('pasted and imported links keep only http(s) and mailto targets', () => {
+  assert.equal(safeHref('/docs/a', 'https://example.com/x/'), 'https://example.com/docs/a');
+  assert.equal(safeHref('mailto:a@example.com'), 'mailto:a@example.com');
+  for (const bad of ['javascript:alert(1)', ' javascript:alert(1)', 'data:text/html,x', 'vbscript:x', 'file:///etc/passwd']) assert.equal(safeHref(bad, 'https://example.com/'), null, bad);
+  // A hostile clipboard can claim any "source URL" as base; relative links then resolve to nothing usable.
+  assert.equal(safeHref('x', 'javascript:alert(1)//'), null);
+});
+
+test('pasted images keep only http(s) and inline image data', () => {
+  assert.equal(safeImageSrc('a.png', 'https://example.com/p/'), 'https://example.com/p/a.png');
+  assert.equal(safeImageSrc('data:image/png;base64,iVBOR'), 'data:image/png;base64,iVBOR');
+  for (const bad of ['javascript:alert(1)', 'data:text/html;base64,PHNjcmlwdD4=', 'file:///c:/x.png', 'blob:https://x/1']) assert.equal(safeImageSrc(bad, 'https://example.com/'), null, bad);
 });

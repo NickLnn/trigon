@@ -1,6 +1,6 @@
 import { AwsClient } from 'aws4fetch';
 import { createReadStream } from 'node:fs';
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, statfs, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, statfs, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -27,6 +27,27 @@ export const blobPath = (key: string) => {
   if (!isKey(key)) throw new Error('Invalid storage key');
   return `${key.slice(0, 2)}/${key}`;
 };
+
+/**
+ * The blobs in a folder laid out like a store (a restored backup's storage/): only `<shard>/<key>` regular
+ * files. Anything else — a symlink, a stray name, a nested folder — is refused, so a crafted backup can't
+ * make a "blob" that points at /proc/self/environ or overwrite anything outside the store.
+ */
+export async function blobsIn(dir: string): Promise<{ key: string; path: string }[]> {
+  const out: { key: string; path: string }[] = [];
+  for (const shard of await readdir(dir)) {
+    const shardPath = join(dir, shard);
+    const s = await lstat(shardPath);
+    if (!/^[0-9a-f]{2}$/.test(shard) || !s.isDirectory()) throw new Error(`Unexpected entry in the backup's files: ${shard}`);
+    for (const key of await readdir(shardPath)) {
+      const path = join(shardPath, key);
+      const f = await lstat(path);
+      if (!isKey(key) || key.slice(0, 2) !== shard || !f.isFile()) throw new Error(`Unexpected entry in the backup's files: ${shard}/${key}`);
+      out.push({ key, path });
+    }
+  }
+  return out;
+}
 
 /** Files on this server's disk (STORAGE_DIR). */
 export class LocalStore implements BlobStore {
@@ -84,10 +105,14 @@ export class LocalStore implements BlobStore {
     return { path: this.path(key), cleanup: async () => undefined };
   }
 
-  /** Copy a folder laid out like this store (backup restore). */
+  /** Copy a folder laid out like this store (backup restore), blob by blob after checking every entry. */
   async importDir(dir: string) {
+    const blobs = await blobsIn(dir);
     await mkdir(this.root, { recursive: true });
-    await cp(dir, this.root, { recursive: true, force: true });
+    for (const { key, path } of blobs) {
+      await mkdir(join(this.root, key.slice(0, 2)), { recursive: true });
+      await copyFile(path, this.path(key));
+    }
   }
 }
 
@@ -201,10 +226,7 @@ export class S3Store implements BlobStore {
 
   /** Upload a folder laid out like a local store (backup restore). */
   async importDir(dir: string) {
-    for (const shard of await readdir(dir).catch(() => [] as string[])) {
-      if (!/^[0-9a-f]{2}$/.test(shard)) continue;
-      for (const key of await readdir(join(dir, shard))) if (isKey(key)) await this.put(key, await readFile(join(dir, shard, key)));
-    }
+    for (const { key, path } of await blobsIn(dir)) await this.put(key, await readFile(path));
   }
 }
 

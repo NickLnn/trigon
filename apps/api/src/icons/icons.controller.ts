@@ -94,7 +94,7 @@ export class IconsController {
   async upload(@CurrentUser() user: AuthUser, @Body('name') name: string, @UploadedFile() file?: Express.Multer.File) {
     if (!file) throw new BadRequestException('file is required');
     const label = name || file.originalname.replace(/\.[^.]+$/, '');
-    return { id: await this.icons.upload(label, file.buffer, file.mimetype, user.id) };
+    return { id: await this.icons.upload(label, file.buffer, user.id) };
   }
 
   @Get(':id')

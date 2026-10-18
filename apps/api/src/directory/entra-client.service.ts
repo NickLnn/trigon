@@ -5,6 +5,16 @@ import { SettingsService } from '../settings/settings.service';
 
 export const GRAPH = 'https://graph.microsoft.com/v1.0';
 
+/** Whether a URL is on Microsoft Graph over HTTPS (the only place the app token may be sent). */
+export const isGraphUrl = (url: string) => {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname === 'graph.microsoft.com' && !u.username && !u.password;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * One MSAL confidential client shared by OIDC sign-in and Graph directory sync. Configuration comes
  * from Settings, so the client is rebuilt whenever an admin changes the tenant, client id or secret.
@@ -108,8 +118,10 @@ export class EntraClientService {
   async graphList<T>(path: string): Promise<T[]> {
     const token = await EntraClientService.appToken(await this.client());
     const out: T[] = [];
-    let next: string | undefined = path.startsWith('http') ? path : `${GRAPH}${path}`;
+    let next: string | undefined = `${GRAPH}${path}`;
     while (next) {
+      // The app token only ever goes to Microsoft Graph, whatever a response's next link says.
+      if (!isGraphUrl(next)) throw new Error('Microsoft Graph returned a next link to another host');
       const res = await fetch(next, {
         headers: { authorization: `Bearer ${token}`, ConsistencyLevel: 'eventual' },
         signal: AbortSignal.timeout(30_000),

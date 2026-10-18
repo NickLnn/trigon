@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { safeHref, safeImageSrc } from './safe-url';
 
 const ALLOWED_TAGS = [
   'p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -33,7 +34,8 @@ function languageFromClasses(el: Element | null): string | null {
  *  - unwraps layout <div>/<span>/<section> so ProseMirror sees the document flow
  */
 export function cleanPastedHtml(html: string, sourceUrl?: string | null): string {
-  if (typeof window === 'undefined') return html;
+  // Fail closed: without a DOM there is no sanitiser, so nothing untrusted is passed through.
+  if (typeof window === 'undefined') return '';
 
   const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
@@ -64,27 +66,24 @@ export function cleanPastedHtml(html: string, sourceUrl?: string | null): string
   });
 
   sanitized.querySelectorAll('img').forEach((img) => {
-    const src = img.getAttribute('src') ?? '';
-    // 1×1 trackers and data: blobs too large to be worth keeping inline
+    const src = safeImageSrc(img.getAttribute('src'), base);
+    // 1×1 trackers, and anything that isn't an http(s) or inline image
     if (!src || (img.getAttribute('width') === '1' && img.getAttribute('height') === '1')) {
       img.remove();
       return;
     }
-    try {
-      if (!src.startsWith('data:')) img.setAttribute('src', new URL(src, base).toString());
-    } catch {
-      img.remove();
-    }
+    img.setAttribute('src', src);
   });
 
   sanitized.querySelectorAll('a[href]').forEach((a) => {
-    try {
-      const href = new URL(a.getAttribute('href')!, base);
-      if (href.protocol === 'http:' || href.protocol === 'https:' || href.protocol === 'mailto:') a.setAttribute('href', href.toString());
-      else a.removeAttribute('href');
-    } catch {
-      a.removeAttribute('href');
-    }
+    const href = safeHref(a.getAttribute('href'), base);
+    if (href) a.setAttribute('href', href);
+    else a.removeAttribute('href');
+  });
+
+  // Only task-list checkboxes survive as inputs.
+  sanitized.querySelectorAll('input').forEach((input) => {
+    if (input.getAttribute('type') !== 'checkbox') input.remove();
   });
 
   // Drop presentation classes now that code languages have been captured.

@@ -20,3 +20,26 @@ export function embedTarget(rawUrl: string | null | undefined): { url: string | 
   const url = webUrl(rawUrl);
   return { url, embedUrl: url ? (matchEmbedProvider(url)?.embedUrl ?? null) : null };
 }
+
+/** A link target resolved against `base`: http(s) or mailto only, else null. */
+export function safeHref(raw: string | null | undefined, base?: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const u = base ? new URL(raw, base) : new URL(raw);
+    return ['http:', 'https:', 'mailto:'].includes(u.protocol) ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** An image source: http(s) resolved against `base`, or an inline raster/SVG `data:image/…` URL; else null. */
+export function safeImageSrc(raw: string | null | undefined, base?: string | null): string | null {
+  if (!raw) return null;
+  if (/^data:/i.test(raw)) return /^data:image\/(png|jpe?g|gif|webp|avif|svg\+xml)[;,]/i.test(raw) ? raw : null;
+  try {
+    const u = base ? new URL(raw, base) : new URL(raw);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}

@@ -22,7 +22,7 @@ test('SVG keeps its type for <img> previews but downloads, sandboxed, when opene
 test('PDFs, images and plain text are shown inline; PDFs keep the browser viewer working', () => {
   const pdf = fileResponseHeaders('application/pdf', 'Runbook.pdf');
   assert.match(pdf['Content-Disposition'], /^inline;/);
-  assert.equal(pdf['Content-Security-Policy'], undefined);
+  assert.equal(pdf['Content-Security-Policy'], "frame-ancestors 'self'");
   const png = fileResponseHeaders('image/png', 'shot.png');
   assert.match(png['Content-Disposition'], /^inline;/);
   assert.match(png['Content-Security-Policy'], /sandbox/);

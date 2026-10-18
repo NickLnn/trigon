@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { safeFetch } from '../common/ssrf';
 import { Database, InjectDb } from '../db/db.module';
 import { documents, icons, spaces } from '../db/schema';
+import { sniffImage } from '../files/sniff';
 import { StorageService } from '../files/storage.service';
 import { ICON_CATALOG } from './catalog';
 
@@ -144,15 +145,10 @@ export class IconsService implements OnApplicationBootstrap {
 
   private async tryImage(url: string) {
     try {
-      const { buffer, contentType } = await safeFetch(url, { maxBytes: MAX_ICON_BYTES, timeoutMs: 8000, accept: 'image/*' });
-      let mime = contentType.split(';')[0].trim().toLowerCase();
-      if (mime === 'application/octet-stream' || mime === 'text/plain') {
-        if (/\.ico(\?|$)/i.test(url)) mime = 'image/x-icon';
-        else if (/\.png(\?|$)/i.test(url)) mime = 'image/png';
-        else if (/\.svg(\?|$)/i.test(url)) mime = 'image/svg+xml';
-      }
-      if (!IMAGE.test(mime) || buffer.length < 100) return null;
-      if (mime === 'image/svg+xml' && !/<svg[\s>]/i.test(buffer.toString('utf8', 0, 2000))) return null;
+      const { buffer } = await safeFetch(url, { maxBytes: MAX_ICON_BYTES, timeoutMs: 8000, accept: 'image/*' });
+      // The type comes from the bytes: servers mislabel favicons, and a hostile one could label anything.
+      const mime = sniffImage(buffer);
+      if (!mime || !IMAGE.test(mime) || buffer.length < 100) return null;
       return { buffer, mime };
     } catch {
       return null;
@@ -205,8 +201,9 @@ export class IconsService implements OnApplicationBootstrap {
     return (await this.findByDomain(domain))!.id;
   }
 
-  async upload(name: string, buffer: Buffer, mime: string, userId: string) {
-    if (!IMAGE.test(mime)) throw new BadRequestException('Use a PNG, SVG, ICO, WebP or JPEG image');
+  async upload(name: string, buffer: Buffer, userId: string) {
+    const mime = sniffImage(buffer);
+    if (!mime || !IMAGE.test(mime)) throw new BadRequestException('Use a PNG, SVG, ICO, WebP or JPEG image');
     if (buffer.length > MAX_ICON_BYTES) throw new BadRequestException('Icons must be under 1 MB');
     const storageKey = await this.storage.put(buffer);
     const [row] = await this.db

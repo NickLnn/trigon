@@ -32,6 +32,31 @@ export function parseBackupName(name: string): Pick<BackupFile, 'name' | 'create
   return { name, createdAt: new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])).toISOString(), trigger: m[7] as BackupFile['trigger'] };
 }
 
+const KEY = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+/** The only paths a Trigon backup contains. */
+const MEMBER = new RegExp(`^(manifest\\.json|database\\.dump|storage/?|storage/[0-9a-f]{2}/?|storage/([0-9a-f]{2})/(${KEY}))$`);
+
+/**
+ * Check an archive's listing before anything is extracted (zip slip / tar slip): names from `tar -tzf`,
+ * entry types from the first character of each `tar -tvzf` line. Only our own file names, and only regular
+ * files and folders — no symlinks or hard links that could point extraction or the later import elsewhere.
+ * Returns the problem, or null when the archive is safe to unpack.
+ */
+export function archiveProblem(names: string[], verbose: string[]): string | null {
+  const entries = names.filter(Boolean);
+  if (!entries.length) return 'The archive is empty.';
+  if (entries.length !== verbose.filter(Boolean).length) return 'The archive listing is inconsistent.';
+  for (const [i, name] of entries.entries()) {
+    const m = MEMBER.exec(name);
+    if (!m) return `Unexpected file in the archive: ${name.slice(0, 120)}`;
+    if (m[2] && m[3].slice(0, 2) !== m[2]) return `Unexpected file in the archive: ${name.slice(0, 120)}`;
+    const type = verbose.filter(Boolean)[i][0];
+    if (type !== '-' && type !== 'd') return `The archive contains a link or special file (${name.slice(0, 120)}).`;
+  }
+  if (!entries.includes('manifest.json') || !entries.includes('database.dump')) return 'This file is not a Trigon backup.';
+  return null;
+}
+
 /** Drop `destination` (the single choice before several destinations existed) so it never round-trips. */
 function withoutLegacy(s: BackupSettings): BackupSettings {
   const { destination: _legacy, ...rest } = s as BackupSettings & { destination?: unknown };
@@ -316,8 +341,13 @@ export class BackupService implements OnModuleInit {
       await this.backup('before-restore', actorId);
       this.step('Fetching the backup');
       const source = await this.fetch(name, join(work, name));
+      this.step('Checking the archive');
+      const archive = join(work, name);
+      const lines = (out: string) => out.split('\n').map((l) => l.trim());
+      const problem = archiveProblem(lines(await run(bin.tar(), ['-tzf', archive])), lines(await run(bin.tar(), ['-tvzf', archive])));
+      if (problem) throw new BadRequestException(problem);
       this.step('Unpacking');
-      await run(bin.tar(), ['-xzf', join(work, name), '-C', work]);
+      await run(bin.tar(), ['-xzf', archive, '-C', work, '--no-same-owner', '--no-same-permissions']);
       const manifest = JSON.parse(await readFile(join(work, 'manifest.json'), 'utf8')) as { app?: string; format?: number };
       if (manifest.app !== 'trigon') throw new Error('This file is not a Trigon backup.');
       this.step('Restoring the database');
