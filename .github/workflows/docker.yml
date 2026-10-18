@@ -77,15 +77,20 @@ jobs:
 
       # Known critical/high OS and library vulnerabilities in the published image, reported to the
       # repository's Security tab (not blocking: base-image fixes arrive through Dependabot).
+      # Image names must be lower-case; the owner name isn't.
+      - id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/trigon-${{ matrix.app }}" >> "$GITHUB_OUTPUT"
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        continue-on-error: true
         with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/trigon-${{ matrix.app }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
           format: sarif
           output: trivy-${{ matrix.app }}.sarif
           severity: CRITICAL,HIGH
           ignore-unfixed: true
       - uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
-        if: always()
+        if: always() && hashFiles(format('trivy-{0}.sarif', matrix.app)) != ''
+        continue-on-error: true
         with:
           sarif_file: trivy-${{ matrix.app }}.sarif
           category: trivy-${{ matrix.app }}
