@@ -58,7 +58,9 @@
 - **Spaces → folders → pages / files**, with **inherited permissions** granted to users, synced groups or everyone, and a share dialog showing where access comes from.
 - **Real-time editor** (Tiptap + Yjs) with a **"/" command menu**, a **web clipper** that cleans pasted web pages and re-hosts their images, and **YouTube / Vimeo / Loom / link-card embeds**.
 - **In-app viewers** for **PDF**, **Word**, **Excel** and **PowerPoint**; **editable text & code files** (YAML, JSON, PowerShell, Bash, Python, configs…).
-- **Email notifications** through any SMTP server or Microsoft 365 — shared with you, review requests, account changes, and a daily or weekly digest of pages to review — each person chooses which.
+- **Comments** on a whole page or a selected passage — replies, resolve, email notifications; they stay attached to the text as people edit, and review "request changes" notes land there too.
+- **Email notifications** through any SMTP server or Microsoft 365 — shared with you, review requests, comments, account changes, and a daily or weekly digest of pages to review — each person chooses which.
+- **Storage overview** (Settings → Storage): disk use, largest files, usage per space, and a cleanup of leftover files. Files can live on the server (default) or in any **S3-compatible bucket** ([guide](docs/s3-storage.md)).
 - **Import** Markdown / HTML files or whole folders; **export** spaces, folders and pages as Markdown or HTML.
 - **Automatic updates** (optional): a scoped Watchtower keeps the Trigon containers current — and never touches anything else on the host.
 
@@ -181,5 +183,5 @@ poppler for PDFs, a small built-in zip/XML reader for Office files, Tesseract fo
 
 ## Roadmap (next)
 
-- Comments on pages and paragraphs (they will plug into review requests and notifications)
-- S3-compatible storage driver
+- @-mentions in comments
+- Visio preview in the browser
