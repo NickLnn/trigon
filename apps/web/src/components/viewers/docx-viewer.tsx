@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { apiBlob } from '@/lib/api';
+import { fixRenderedDocx, prepareDocx } from '@/lib/docx-fixups';
 
 /**
  * In-browser Word viewer (docx-preview): renders paragraphs, tables, styles, headers/footers and
  * images to HTML — no Office install needed. Pages are scaled down to fit narrow (phone) screens.
+ * docx-fixups.ts patches the layout cases docx-preview gets wrong (table indents, first-page headers, fonts).
  */
 export function DocxViewer({ fileUrl }: { fileUrl: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -17,9 +19,9 @@ export function DocxViewer({ fileUrl }: { fileUrl: string }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [{ renderAsync }, blob] = await Promise.all([import('docx-preview'), apiBlob(fileUrl)]);
+      const [{ renderAsync }, prepared] = await Promise.all([import('docx-preview'), apiBlob(fileUrl).then(prepareDocx)]);
       if (cancelled || !bodyRef.current) return;
-      await renderAsync(blob, bodyRef.current, styleRef.current ?? undefined, {
+      await renderAsync(prepared.blob, bodyRef.current, styleRef.current ?? undefined, {
         className: 'docx',
         inWrapper: true,
         breakPages: true,
@@ -31,6 +33,7 @@ export function DocxViewer({ fileUrl }: { fileUrl: string }) {
         useBase64URL: false,
         experimental: true,
       });
+      fixRenderedDocx(bodyRef.current, styleRef.current, { firstPage: prepared.firstPage });
       if (!cancelled) setState('ready');
     })().catch((err) => {
       console.error(err);
