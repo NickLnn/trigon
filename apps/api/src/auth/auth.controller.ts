@@ -200,7 +200,7 @@ export class AuthController {
   @Get('me')
   async me(@CurrentUser() user: AuthUser, @Req() req: Request) {
     // An admin's browser tells us the real public (HTTPS) address — Microsoft sign-in is enabled there.
-    if (user.role === 'admin') this.redirects.learnFromAdmin(req).catch(() => undefined);
+    if (user.role === 'admin') this.redirects.learnFromAdmin(req, user.id).catch(() => undefined);
     const session = await this.identity.toSessionUser(user.id);
     if (!session) throw new UnauthorizedException();
     return session;

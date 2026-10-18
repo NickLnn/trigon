@@ -104,7 +104,7 @@ export class EntraRedirectService implements OnApplicationBootstrap {
    * Validate the public address an admin confirmed in "Connect to Microsoft" and put it first in the
    * trusted list. Only https:// is accepted (http://localhost for development).
    */
-  async confirmOrigin(publicUrl: string): Promise<string> {
+  async confirmOrigin(publicUrl: string, userId?: string): Promise<string> {
     let origin: string;
     try {
       origin = new URL(publicUrl.trim()).origin;
@@ -115,19 +115,20 @@ export class EntraRedirectService implements OnApplicationBootstrap {
       throw new BadRequestException('Microsoft only accepts HTTPS addresses for sign-in. Enter the https:// address people use to open Trigon.');
     }
     const current = (await this.settings.get('entra')).signInOrigins ?? [];
-    await this.settings.update('entra', { signInOrigins: [origin, ...current.filter((o) => o !== origin)].slice(0, MAX_ORIGINS) });
+    await this.settings.update('entra', { signInOrigins: [origin, ...current.filter((o) => o !== origin)].slice(0, MAX_ORIGINS) }, userId);
     return origin;
   }
 
   /** Remember the HTTPS address an admin is using, so Microsoft sign-in works there too. */
-  async learnFromAdmin(req: Request): Promise<void> {
+  async learnFromAdmin(req: Request, adminId?: string): Promise<void> {
     const origin = requestOrigin(req);
     if (!origin?.startsWith('https://') || this.learning.has(origin)) return;
     if ((await this.trustedOrigins()).includes(origin)) return;
     this.learning.add(origin);
     try {
       const current = (await this.settings.get('entra')).signInOrigins ?? [];
-      await this.settings.update('entra', { signInOrigins: [...current, origin].slice(-MAX_ORIGINS) });
+      // Audited as the admin's change: it adds a trusted sign-in redirect address.
+      await this.settings.update('entra', { signInOrigins: [...current, origin].slice(-MAX_ORIGINS) }, adminId);
       this.logger.log(`Learned public address ${origin} for Microsoft sign-in`);
     } finally {
       this.learning.delete(origin);

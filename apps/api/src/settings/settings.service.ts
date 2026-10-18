@@ -5,7 +5,19 @@ import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
 import { Database, InjectDb } from '../db/db.module';
 import { settings } from '../db/schema';
+import { ActivityService } from '../activity/activity.service';
+import { settingsChanges } from '../activity/redact';
 import { maskSecrets, SecretBox } from './secret-box';
+
+/** Audit-log names of the settings sections. */
+const SECTION_NAMES: Record<string, string> = {
+  general: 'General',
+  entra: 'Microsoft Entra ID',
+  ldap: 'LDAP / Active Directory',
+  email: 'Email',
+  backup: 'Backups',
+  search: 'Search',
+};
 
 export interface SettingsMap {
   general: GeneralSettings;
@@ -44,6 +56,7 @@ export class SettingsService implements OnModuleInit {
   constructor(
     @InjectDb() private readonly db: Database,
     private readonly config: ConfigService,
+    private readonly activity: ActivityService,
   ) {
     const dedicated = config.get<string>('SETTINGS_ENCRYPTION_KEY');
     const jwt = config.getOrThrow<string>('JWT_ACCESS_SECRET');
@@ -201,6 +214,13 @@ export class SettingsService implements OnModuleInit {
       .onConflictDoUpdate({ target: settings.key, set: { value: stored, updatedById: userId } });
     this.cache.delete(key);
     this.changes.emit('changed', key);
+    // Every change an administrator makes is audited here, with old → new values (secrets only as "changed").
+    if (userId) {
+      const changes = settingsChanges(current as unknown as Record<string, unknown>, next, SECRET_FIELDS[key] as string[], ['lastRun']);
+      if (Object.keys(changes).length) {
+        this.activity.record({ action: 'settings.updated', actorId: userId, target: { type: 'settings', id: null, name: SECTION_NAMES[key] ?? key }, details: { changes } });
+      }
+    }
     return this.get(key);
   }
 

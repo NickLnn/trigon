@@ -1,5 +1,6 @@
 # Build from the monorepo root:  docker build -f apps/web/Dockerfile .
-FROM node:22-alpine AS build
+# Base images are pinned by digest (multi-arch index); Dependabot proposes updates as pull requests.
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
@@ -15,7 +16,7 @@ ARG GIT_SHA=dev
 ENV API_INTERNAL_URL=$API_INTERNAL_URL NEXT_PUBLIC_COLLAB_URL=$NEXT_PUBLIC_COLLAB_URL GIT_SHA=$GIT_SHA NEXT_TELEMETRY_DISABLED=1
 RUN npm run build -w @trigon/shared && npm run build -w @trigon/web
 
-FROM node:22-alpine
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 WORKDIR /app
 COPY --from=build --chown=node:node /app/apps/web/.next/standalone ./

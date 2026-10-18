@@ -16,7 +16,8 @@ name: trigon
 services:
   postgres:
     container_name: trigon-postgres
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    security_opt: ['no-new-privileges:true']
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-trigon}
@@ -33,7 +34,8 @@ services:
 
   redis:
     container_name: trigon-redis
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    security_opt: ['no-new-privileges:true']
     restart: unless-stopped
     # Password-protected when REDIS_PASSWORD is set in .env (recommended).
     command: redis-server --appendonly yes --protected-mode yes ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
@@ -53,6 +55,9 @@ services:
     init: true
     image: ghcr.io/nicklnn/trigon-api:${TRIGON_TAG:-latest}
     restart: unless-stopped
+    # Runs as the unprivileged "node" user; needs no Linux capabilities and may never gain any.
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
     labels: &autoupdate
       com.centurylinklabs.watchtower.enable: 'true'
       com.centurylinklabs.watchtower.scope: trigon
@@ -86,7 +91,14 @@ services:
     init: true
     image: ghcr.io/nicklnn/trigon-web:${TRIGON_TAG:-latest}
     restart: unless-stopped
+    # Runs as the unprivileged "node" user; needs no Linux capabilities and may never gain any.
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
     labels: *autoupdate
+    environment:
+      # Reverse proxies on other machines whose forwarded client address the audit log may believe
+      # (Docker networks and loopback are trusted already), e.g. 192.168.xxx.xxx or a /24 range.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     ports:
       - '${WEB_PORT:-3000}:3000'
     depends_on:

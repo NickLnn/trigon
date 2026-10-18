@@ -1,5 +1,6 @@
 # Build from the monorepo root:  docker build -f apps/api/Dockerfile .
-FROM node:22-alpine AS build
+# Base images are pinned by digest (multi-arch index); Dependabot proposes updates as pull requests.
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
@@ -10,7 +11,7 @@ COPY packages/shared packages/shared
 COPY apps/api apps/api
 RUN npm run build -w @trigon/shared && npm run build -w @trigon/api
 
-FROM node:22-alpine AS prod-deps
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
@@ -18,7 +19,7 @@ COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 RUN npm ci --omit=dev --workspace @trigon/shared --workspace @trigon/api --include-workspace-root=false --no-audit --no-fund
 
-FROM node:22-alpine
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 ENV NODE_ENV=production
 # Backups: pg_dump/pg_restore matching the PostgreSQL 17 server, and smbclient for SMB destinations.
 # Search: poppler-utils reads text out of PDFs; tesseract-ocr reads scanned pages and images (no language data from apk).

@@ -3,7 +3,6 @@ import type { AllSettings, DirectoryPick, EmailMicrosoftStatus, EmailSettings, E
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { CronJob } from 'cron';
-import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { EntraClientService, GRAPH } from '../directory/entra-client.service';
 import { validTenantId } from '../auth/entra-auth.service';
@@ -138,19 +137,8 @@ export class SettingsController {
     private readonly provisioner: EntraProvisionerService,
     private readonly entraClient: EntraClientService,
     private readonly redirects: EntraRedirectService,
-    private readonly activity: ActivityService,
     private readonly email: EmailService,
   ) {}
-
-  /** Only which fields were saved is logged, never their values (they include secrets). */
-  private recordSave(userId: string, section: string, dto: object) {
-    this.activity.record({
-      action: 'settings.updated',
-      actorId: userId,
-      target: { type: 'settings', id: null, name: section },
-      details: { fields: Object.keys(dto) },
-    });
-  }
 
   @Get()
   async all(): Promise<AllSettings> {
@@ -177,8 +165,7 @@ export class SettingsController {
     for (const k of ['internalUrl', 'publicUrl'] as const) if (patch[k] === undefined) delete patch[k];
     await this.settings.update('general', patch, user.id);
     // A public HTTPS address is also where Microsoft sign-in has to send people back to.
-    if (patch.publicUrl?.startsWith('https://')) await this.redirects.confirmOrigin(patch.publicUrl).catch(() => undefined);
-    this.recordSave(user.id, 'General', dto);
+    if (patch.publicUrl?.startsWith('https://')) await this.redirects.confirmOrigin(patch.publicUrl, user.id).catch(() => undefined);
     return this.settings.getPublic('general');
   }
 
@@ -187,7 +174,6 @@ export class SettingsController {
     assertCron(dto.syncCron);
     assertEntraTarget(dto);
     await this.settings.update('entra', dto as Partial<EntraSettings>, user.id);
-    this.recordSave(user.id, 'Microsoft Entra ID', dto);
     return this.settings.getPublic('entra');
   }
 
@@ -195,14 +181,12 @@ export class SettingsController {
   async ldapSave(@CurrentUser() user: AuthUser, @Body() dto: LdapDto) {
     assertCron(dto.syncCron);
     await this.settings.update('ldap', dto as Partial<LdapSettings>, user.id);
-    this.recordSave(user.id, 'LDAP / Active Directory', dto);
     return this.settings.getPublic('ldap');
   }
 
   @Put('email')
   async emailSave(@CurrentUser() user: AuthUser, @Body() dto: EmailDto) {
     await this.settings.update('email', dto as Partial<EmailSettings>, user.id);
-    this.recordSave(user.id, 'Email', dto);
     return this.settings.getPublic('email');
   }
 
@@ -222,6 +206,8 @@ export class SettingsController {
 
   @Get('email/preview/:kind')
   @Header('Content-Type', 'text/html; charset=utf-8')
+  // A page of our own HTML: styles and images, never scripts.
+  @Header('Content-Security-Policy', "default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; frame-ancestors 'self'; sandbox")
   async emailPreview(@Param('kind') kind: string) {
     const html = previewHtml(kind, await this.settings.publicUrl());
     if (!html) throw new NotFoundException();
@@ -238,7 +224,6 @@ export class SettingsController {
   @Put('entra/scope')
   async entraScope(@CurrentUser() user: AuthUser, @Body() dto: EntraScopeDto) {
     await this.settings.update('entra', dto as Partial<EntraSettings>, user.id);
-    this.recordSave(user.id, 'Microsoft Entra ID (sync scope)', dto);
     return this.settings.getPublic('entra');
   }
 

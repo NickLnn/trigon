@@ -57,8 +57,7 @@ export class BackupsController {
       }
     }
     if (dto.destinations.includes('local') && !dto.localPath.startsWith('/')) throw new BadRequestException('The folder must be an absolute path inside the container, e.g. /data/backups');
-    await this.backups.save(dto as BackupSettings, user.id);
-    this.activity.record({ action: 'settings.updated', actorId: user.id, target: { type: 'settings', id: null, name: 'Backups' }, details: { fields: Object.keys(dto) } });
+    await this.backups.save(dto as BackupSettings, user.id); // audited by SettingsService (old → new)
     return this.backups.overview();
   }
 
@@ -75,9 +74,11 @@ export class BackupsController {
   }
 
   @Get('files/:name')
-  async download(@Param('name') name: string, @Query('from') from: string | undefined, @Res() res: Response) {
+  async download(@CurrentUser() user: AuthUser, @Param('name') name: string, @Query('from') from: string | undefined, @Res() res: Response) {
     const source = (BACKUP_DESTINATIONS as readonly string[]).includes(from ?? '') ? (from as BackupDestination) : undefined;
     const { file, cleanup } = await this.backups.download(name, source);
+    // A backup is the whole database: who took a copy, and from where, must be on record.
+    this.activity.record({ action: 'backup.downloaded', actorId: user.id, target: { type: 'backup', id: null, name }, details: { destination: source ?? 'first available' } });
     res.set({ 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${name}"` });
     const stream = createReadStream(file);
     stream.on('close', () => void cleanup());

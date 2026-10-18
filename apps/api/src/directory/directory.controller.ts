@@ -1,5 +1,5 @@
 import { Controller, Get, HttpCode, Post } from '@nestjs/common';
-import { Roles } from '../common/decorators';
+import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { DirectorySyncService } from './directory-sync.service';
 
 @Controller('directory')
@@ -15,13 +15,13 @@ export class DirectoryController {
   /** Starts a sync in the background; poll GET /directory/status for progress and the result. */
   @Post('sync/entra')
   @HttpCode(202)
-  syncEntra() {
-    return this.sync.start('entra');
+  syncEntra(@CurrentUser() user: AuthUser) {
+    return this.sync.start('entra', user.id);
   }
 
   @Post('sync/ldap')
   @HttpCode(202)
-  syncLdap() {
-    return this.sync.start('ldap');
+  syncLdap(@CurrentUser() user: AuthUser) {
+    return this.sync.start('ldap', user.id);
   }
 }

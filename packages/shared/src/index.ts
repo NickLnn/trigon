@@ -157,6 +157,8 @@ export const ACTIVITY_ACTIONS = {
   'user.sign_in_failed': { category: 'access', label: 'Failed sign-in' },
   'user.locked': { category: 'access', label: 'Sign-in paused after failed attempts' },
   'user.identity_linked': { category: 'access', label: 'Linked a sign-in method' },
+  'user.signed_out': { category: 'access', label: 'Signed out' },
+  'user.token_reuse': { category: 'access', label: 'Reused a revoked session (signed out everywhere)' },
   'user.created': { category: 'admin', label: 'Created user' },
   'user.updated': { category: 'admin', label: 'Changed user' },
   'user.password_set': { category: 'admin', label: 'Set password' },
@@ -169,6 +171,8 @@ export const ACTIVITY_ACTIONS = {
   'backup.failed': { category: 'admin', label: 'Backup failed' },
   'backup.restored': { category: 'admin', label: 'Restored a backup' },
   'backup.deleted': { category: 'admin', label: 'Deleted a backup' },
+  'backup.downloaded': { category: 'admin', label: 'Downloaded a backup' },
+  'directory.synced': { category: 'admin', label: 'Synced the directory' },
   'storage.cleaned': { category: 'admin', label: 'Removed leftover files' },
 } as const satisfies Record<string, { category: ActivityCategory; label: string }>;
 export type ActivityAction = keyof typeof ACTIVITY_ACTIONS;

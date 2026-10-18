@@ -87,7 +87,7 @@ export class EntraProvisionerService {
    */
   async start(userId: string, publicUrl: string, mail = false): Promise<EntraProvisionStatus> {
     if (this.busy()) throw new ConflictException('A Microsoft connection is already in progress');
-    await this.redirects.confirmOrigin(publicUrl);
+    await this.redirects.confirmOrigin(publicUrl, userId);
     this.status = { state: 'waiting_for_sign_in', steps: STEPS.map((label) => ({ label, done: false })) };
 
     const pca = new PublicClientApplication({

@@ -2,7 +2,6 @@ import { BadRequestException, Body, Controller, Get, HttpCode, Post, Put } from 
 import type { SearchIndexStatus, SearchSettings } from '@trigon/shared';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsString, Matches, Max, Min } from 'class-validator';
 import { and, count, eq, isNull, sql } from 'drizzle-orm';
-import { ActivityService } from '../activity/activity.service';
 import { CurrentUser, Roles, type AuthUser } from '../common/decorators';
 import { Database, InjectDb } from '../db/db.module';
 import { attachments, documents } from '../db/schema';
@@ -28,7 +27,6 @@ export class SearchSettingsController {
     @InjectDb() private readonly db: Database,
     private readonly settings: SettingsService,
     private readonly index: TextIndexService,
-    private readonly activity: ActivityService,
   ) {}
 
   @Get()
@@ -60,9 +58,7 @@ export class SearchSettingsController {
     const missing = dto.ocrLanguages.filter((l) => !installed.has(l));
     if (missing.length && (await toolsAvailable()).ocr) throw new BadRequestException(`Not installed: ${missing.join(', ')}. Add the .traineddata file to data/tessdata first.`);
     if (dto.ocrEnabled && !dto.ocrLanguages.length) throw new BadRequestException('Pick at least one OCR language.');
-    const saved = await this.settings.update('search', dto as SearchSettings, user.id);
-    this.activity.record({ action: 'settings.updated', actorId: user.id, target: { type: 'settings', id: null, name: 'Search' }, details: { fields: Object.keys(dto) } });
-    return saved;
+    return this.settings.update('search', dto as SearchSettings, user.id); // audited by SettingsService
   }
 
   /** Read files again (all, or only PDFs and images) — e.g. after turning OCR on or adding a language. */

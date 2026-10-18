@@ -16,21 +16,33 @@ const PORT = Number(process.env.PORT || 3000);
 const NEXT_PORT = Number(process.env.NEXT_INTERNAL_PORT || 3001);
 const collab = new URL(process.env.COLLAB_INTERNAL_URL || 'http://api:4001');
 
-/** Private, loopback and link-local addresses: Docker networks, the LAN, a tunnel container. */
-const PRIVATE = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|::1$|f[cd][0-9a-f]{2}:|fe80:)/i;
-const bare = (ip) => String(ip || '').trim().replace(/^::ffff:/i, '');
-
 /**
- * The visitor's address, for the activity log. A connection from a public address can't be faked, so
- * it is used as is. One from a private address is a reverse proxy / Cloudflare tunnel (or a LAN
- * client), so the address it forwarded is used.
+ * Proxies whose forwarded client address (CF-Connecting-IP, X-Real-IP, X-Forwarded-For) is believed:
+ * loopback and the Docker networks by default — a Cloudflare tunnel container or the NAS's reverse proxy
+ * reaches us from there. A LAN computer connecting directly is *not* a proxy, so it can't put a fake
+ * address into the audit log. Add others with TRUSTED_PROXIES (comma-separated addresses or CIDRs).
  */
+const TRUSTED = new net.BlockList();
+TRUSTED.addSubnet('127.0.0.0', 8, 'ipv4');
+TRUSTED.addAddress('::1', 'ipv6');
+TRUSTED.addSubnet('172.16.0.0', 12, 'ipv4');
+for (const entry of String(process.env.TRUSTED_PROXIES || '').split(',').map((s) => s.trim()).filter(Boolean)) {
+  const [addr, bits] = entry.split('/');
+  const type = net.isIP(addr) === 6 ? 'ipv6' : 'ipv4';
+  if (!net.isIP(addr)) console.warn(`TRUSTED_PROXIES: ignoring "${entry}"`);
+  else if (bits) TRUSTED.addSubnet(addr, Number(bits), type);
+  else TRUSTED.addAddress(addr, type);
+}
+const bare = (ip) => String(ip || '').trim().replace(/^::ffff:/i, '');
+const trusted = (ip) => net.isIP(ip) !== 0 && TRUSTED.check(ip, net.isIP(ip) === 6 ? 'ipv6' : 'ipv4');
+
+/** The visitor's address, for the audit log and rate limits. Forwarded headers count only from a trusted proxy. */
 function clientIp(req) {
   const peer = bare(req.socket.remoteAddress);
-  if (!PRIVATE.test(peer)) return peer;
+  if (!trusted(peer)) return peer;
   const h = req.headers;
-  const forwarded = h['cf-connecting-ip'] || h['x-real-ip'] || String(h['x-forwarded-for'] || '').split(',')[0];
-  return bare(forwarded) || peer;
+  const forwarded = bare(h['cf-connecting-ip'] || h['x-real-ip'] || String(h['x-forwarded-for'] || '').split(',')[0]);
+  return net.isIP(forwarded) ? forwarded : peer;
 }
 
 /** Headers for the upstream request: our client-IP header (never the caller's) and an appended X-Forwarded-For. */

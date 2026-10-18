@@ -5,6 +5,7 @@ import { ACCESS_COOKIE, REFRESH_COOKIE, type SystemRole } from '@trigon/shared';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { CookieOptions, Request, Response } from 'express';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { ActivityService } from '../activity/activity.service';
 import { Database, InjectDb } from '../db/db.module';
 import { refreshTokens, users } from '../db/schema';
 import { requestOrigin } from '../directory/entra-redirect.service';
@@ -28,6 +29,7 @@ export class TokensService {
     @InjectDb() private readonly db: Database,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly activity: ActivityService,
   ) {}
 
   /**
@@ -96,6 +98,8 @@ export class TokensService {
     if (!row || row.expiresAt < new Date()) throw new UnauthorizedException();
     if (row.revokedAt) {
       await this.revokeFamily(row.familyId);
+      // A revoked token came back: either a stolen copy or a replayed request. Worth an investigation.
+      this.activity.record({ action: 'user.token_reuse', actorId: row.userId, details: { session: row.familyId, userAgent: row.userAgent } });
       throw new UnauthorizedException('Refresh token reuse detected');
     }
     const [user] = await this.db.select().from(users).where(eq(users.id, row.userId)).limit(1);
@@ -117,7 +121,10 @@ export class TokensService {
   async logout(res: Response, raw: string | undefined) {
     if (raw) {
       const [row] = await this.db.select().from(refreshTokens).where(eq(refreshTokens.tokenHash, sha256(raw))).limit(1);
-      if (row) await this.revokeFamily(row.familyId);
+      if (row) {
+        await this.revokeFamily(row.familyId);
+        this.activity.record({ action: 'user.signed_out', actorId: row.userId });
+      }
     }
     res.clearCookie(ACCESS_COOKIE, { ...this.cookieBase(res), path: '/' });
     res.clearCookie(REFRESH_COOKIE, { ...this.cookieBase(res), path: '/' });

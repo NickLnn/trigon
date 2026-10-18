@@ -3,6 +3,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import type { GroupSource, SyncResult, SyncSourceStatus } from '@trigon/shared';
 import { CronJob } from 'cron';
 import { and, count, eq, inArray, isNull, max, ne, notInArray, sql } from 'drizzle-orm';
+import { ActivityService } from '../activity/activity.service';
 import { Database, InjectDb } from '../db/db.module';
 import { accounts, groupMembers, groups, refreshTokens, users } from '../db/schema';
 import { SettingsService } from '../settings/settings.service';
@@ -31,6 +32,7 @@ interface GraphMember extends Partial<GraphUser> {
 
 const USER_SELECT = 'id,displayName,mail,userPrincipalName,jobTitle,department,accountEnabled';
 type Source = 'entra' | 'ldap';
+const LABEL: Record<Source, string> = { entra: 'Microsoft Entra ID', ldap: 'LDAP / Active Directory' };
 
 /**
  * Pulls users, groups and memberships from Entra ID (Graph) and LDAP into Trigon's tables.
@@ -53,6 +55,7 @@ export class DirectorySyncService implements OnModuleInit {
     private readonly entra: EntraClientService,
     private readonly ldap: LdapService,
     private readonly scheduler: SchedulerRegistry,
+    private readonly activity: ActivityService,
   ) {}
 
   async onModuleInit() {
@@ -77,23 +80,26 @@ export class DirectorySyncService implements OnModuleInit {
   }
 
   /** Start a sync in the background and return immediately (the UI polls status()). */
-  start(source: Source): { started: boolean } {
+  start(source: Source, actorId: string | null = null): { started: boolean } {
     if (this.running.has(source)) throw new ConflictException(`A ${source === 'entra' ? 'Microsoft' : 'LDAP'} sync is already running`);
-    void this.run(source).catch(() => undefined);
+    void this.run(source, actorId).catch(() => undefined);
     return { started: true };
   }
 
   /** Run a sync to completion (cron, tests). Records the outcome for status(). */
-  async run(source: Source): Promise<SyncResult> {
+  async run(source: Source, actorId: string | null = null): Promise<SyncResult> {
     if (this.running.has(source)) throw new ConflictException(`${source} sync already running`);
     this.running.set(source, new Date());
     try {
       const result = source === 'entra' ? await this.syncEntra() : await this.syncLdap();
       this.last.set(source, { result: { ...result, finishedAt: new Date().toISOString() }, error: null });
       this.logger.log(`${source} sync: ${JSON.stringify(result)}`);
+      // Sync creates, deactivates and regroups accounts — access changes that belong in the audit log.
+      this.activity.record({ action: 'directory.synced', actorId, actorName: actorId ? null : 'Scheduled sync', target: { type: 'directory', id: null, name: LABEL[source] }, details: { ...result } });
       return result;
     } catch (err) {
       const message = (err as Error).message;
+      this.activity.record({ action: 'directory.synced', actorId, actorName: actorId ? null : 'Scheduled sync', target: { type: 'directory', id: null, name: LABEL[source] }, details: { failed: true, reason: message.slice(0, 500) } });
       this.last.set(source, { result: this.last.get(source)?.result ?? null, error: message });
       this.logger.error(`${source} sync failed: ${message}`);
       throw err;

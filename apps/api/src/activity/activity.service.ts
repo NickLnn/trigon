@@ -4,6 +4,7 @@ import { ACTIVITY_ACTIONS, type ActivityAction } from '@trigon/shared';
 import { and, eq, lt, sql } from 'drizzle-orm';
 import { Database, InjectDb } from '../db/db.module';
 import { activity, documents, groups, spaces, users } from '../db/schema';
+import { redact } from './redact';
 import { requestContext, type RequestContext } from './request-context';
 import { textDiff } from './text-diff';
 
@@ -73,7 +74,8 @@ export class ActivityService {
         targetType: input.target?.type ?? null,
         targetId: input.target?.id ?? null,
         targetName: input.target?.name ?? null,
-        details: input.details ?? {},
+        // Belt and braces: no password, token or secret value is ever stored, whatever a caller passes.
+        details: redact(input.details ?? {}) as Record<string, unknown>,
         ip: ctx?.ip ?? null,
         userAgent: ctx?.userAgent ?? null,
       })
